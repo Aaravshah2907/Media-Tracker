@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import axios from 'axios';
-import { Search, Loader2, Edit3, X, Save, ExternalLink, RefreshCw, Send, ZapOff, CheckCircle, Folder, Play, Download, PlusCircle, Trash2, Plus } from 'lucide-react';
+import { Search, Loader2, Edit3, X, Save, ExternalLink, RefreshCw, Send, ZapOff, CheckCircle, Folder, Play, Download, PlusCircle, Trash2, Plus, Filter } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 
 const API_BASE = 'http://localhost:3001/api';
@@ -334,93 +334,87 @@ const App = () => {
 
   return (
     <div className="app-container">
-      <header>
-        <motion.h1 
-          initial={{ opacity: 0, x: -20 }}
-          animate={{ opacity: 1, x: 0 }}
-        >
-          TRACKER VIEW
-        </motion.h1>
-        
-        <div className="header-controls">
-          <div className="search-wrapper">
-            <Search className="search-icon" size={18} />
+      <header className="header" style={{ padding: '25px 5%', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '20px' }}>
+        <div className="discovery-island">
+          <div className="search-group">
+            <div className="search-addon"><Search size={18} /></div>
             <input 
               type="text" 
-              className="search-bar" 
-              placeholder="Add or Search library..." 
+              className="island-input" 
+              placeholder="Search or add..." 
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               onKeyDown={(e) => {
                 if (e.key === 'Enter') handleWebSearch(search);
               }}
-              style={{ paddingRight: '40px' }}
             />
+            <select 
+                className="island-select" 
+                value={activeTab} 
+                onChange={(e) => setActiveTab(e.target.value)}
+                title="Select Search Type"
+            >
+                <option value="movie">Movies</option>
+                <option value="tv">TV Shows</option>
+                <option value="anime">Anime</option>
+                <option value="manga">Manga</option>
+                <option value="book">Books</option>
+            </select>
+            <button className="island-btn primary" onClick={() => handleWebSearch(search)} title="Search/Add Discovery">
+              <Plus size={20} />
+            </button>
           </div>
-          
-          <select 
-              className="search-bar" 
-              style={{ width: 'auto', padding: '0 15px', color: 'inherit', textAlign: 'center', cursor: 'pointer' }} 
-              value={activeTab} 
-              onChange={(e) => setActiveTab(e.target.value)}
-          >
-              <option value="movie">Movies</option>
-              <option value="tv">TV Shows</option>
-              <option value="anime">Anime</option>
-          </select>
+        </div>
 
-          <button className="icon-btn" onClick={() => handleWebSearch(search)}>
-            <Plus size={20} />
-          </button>
+        <div className="curation-island">
+          <div className="filter-group">
+            <div className="search-addon"><Filter size={18} /></div>
+            <select 
+              className="island-select" 
+              value={statusFilter} 
+              onChange={(e) => setStatusFilter(e.target.value)}
+              title="Filter by Status"
+            >
+              <option value="all">Any Status</option>
+              <option value="planned">Planned</option>
+              <option value="watching">Watching</option>
+              <option value="caught up">Caught Up</option>
+              <option value="completed">Completed</option>
+              <option value="dropped">Dropped</option>
+              <option value="paused">Paused</option>
+            </select>
 
-          <select 
-            className="search-bar" 
-            style={{ width: 'auto', padding: '0 15px', color: 'inherit', textAlign: 'center', cursor: 'pointer' }} 
-            value={statusFilter} 
-            onChange={(e) => setStatusFilter(e.target.value)}
-          >
-            <option value="all">Any Status</option>
-            <option value="planned">Planned</option>
-            <option value="watching">Watching</option>
-            <option value="caught up">Caught Up</option>
-            <option value="completed">Completed</option>
-            <option value="dropped">Dropped</option>
-            <option value="paused">Paused</option>
-          </select>
+            <select 
+              className="island-select" 
+              value={minRatingFilter} 
+              onChange={(e) => setMinRatingFilter(Number(e.target.value))}
+              title="Minimum Rating"
+            >
+              <option value={0}>Any Rating</option>
+              <option value={7}>7.0+ ⭐</option>
+              <option value={8}>8.0+ ⭐</option>
+              <option value={9}>9.0+ ⭐</option>
+            </select>
 
-          <select 
-            className="search-bar" 
-            style={{ width: 'auto', padding: '0 15px', color: 'inherit', textAlign: 'center', cursor: 'pointer' }} 
-            value={minRatingFilter} 
-            onChange={(e) => setMinRatingFilter(Number(e.target.value))}
-          >
-            <option value={0}>Any Rating</option>
-            <option value={7}>7.0+ ⭐</option>
-            <option value={8}>8.0+ ⭐</option>
-            <option value={9}>9.0+ ⭐</option>
-          </select>
+            <button 
+               className={`island-btn ${showLocalOnly ? 'active' : ''}`}
+               onClick={() => setShowLocalOnly(!showLocalOnly)} 
+               title={showLocalOnly ? "Show All Media" : "Filter Local Only"}
+            >
+              <Download size={20} />
+            </button>
+          </div>
 
-          <button 
-             className="icon-btn" 
-             style={showLocalOnly ? { background: 'var(--accent-color)', color: 'var(--bg-color)', borderColor: 'var(--accent-color)' } : {}}
-             onClick={() => setShowLocalOnly(!showLocalOnly)} 
-             title={showLocalOnly ? "Showing Custom Local Media" : "Filter Local Only"}
-          >
-            <Download size={20} />
-          </button>
-
-          <button className="icon-btn" onClick={() => axios.post(`${API_BASE}/open-mt-add`)} title="Add Media">
-            <PlusCircle size={20} />
-          </button>
-
-          <button 
-            className={`icon-btn ${syncing ? 'spinning' : ''}`} 
-            onClick={() => runSync()} 
-            title={syncing ? "Syncing..." : "Refresh Metadata"}
-            disabled={syncing}
-          >
-            {syncing ? <Loader2 size={20} className="loader" /> : <RefreshCw size={20} />}
-          </button>
+          <div className="sync-section">
+            <button 
+              className={`icon-btn ${syncing ? 'spinning' : ''}`} 
+              onClick={() => runSync()} 
+              title={syncing ? "Syncing..." : "Refresh Metadata"}
+              disabled={syncing}
+            >
+              {syncing ? <Loader2 size={18} className="loader" /> : <RefreshCw size={18} />}
+            </button>
+          </div>
         </div>
       </header>
 

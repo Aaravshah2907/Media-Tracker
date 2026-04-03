@@ -42,96 +42,144 @@ body {
   width: 100%;
 }
 
-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 20px;
-  background: var(--glass-bg);
-  backdrop-filter: blur(20px);
-  padding: 20px 30px;
-  border-radius: 20px;
-  border: 1px solid var(--glass-border);
+.header {
   position: sticky;
-  top: 20px;
+  top: 0;
   z-index: 100;
+  background: rgba(11, 12, 16, 0.5);
+  backdrop-filter: blur(25px);
+  border-bottom: 1px solid var(--island-border);
 }
 
-.header-controls {
+.discovery-island, 
+.curation-island {
   display: flex;
+  align-items: center;
   gap: 15px;
-  align-items: center;
 }
 
-.search-wrapper {
-  position: relative;
+.search-group,
+.filter-group {
   display: flex;
   align-items: center;
-}
-
-.search-icon {
-  position: absolute;
-  left: 15px;
-  color: var(--text-secondary);
-  pointer-events: none;
-}
-
-h1 {
-  font-family: 'Outfit', sans-serif;
-  font-size: 2.5rem;
-  font-weight: 800;
-  background: linear-gradient(135deg, #fff 0%, var(--accent-color) 100%);
-  -webkit-background-clip: text;
-  background-clip: text;
-  -webkit-text-fill-color: transparent;
-  letter-spacing: -0.05em;
-}
-
-.search-bar {
-  background: rgba(255, 255, 255, 0.05);
-  border: 1px solid var(--glass-border);
-  padding: 12px 15px 12px 45px;
-  border-radius: 12px;
-  color: var(--text-primary);
-  width: 250px;
-  font-family: inherit;
+  background: var(--island-bg);
+  backdrop-filter: blur(30px) saturate(180%);
+  border: 1px solid var(--island-border);
+  border-radius: 14px;
+  overflow: hidden;
+  height: 46px;
   transition: var(--transition);
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.2);
 }
 
-.search-bar:focus {
-  outline: none;
+.search-group:focus-within,
+.filter-group:focus-within {
   border-color: var(--accent-color);
-  background: rgba(255, 255, 255, 0.1);
-  box-shadow: 0 0 0 4px rgba(100, 255, 218, 0.1);
+  box-shadow: 0 0 20px rgba(100, 255, 218, 0.15);
 }
 
-.command-bar {
-  border-style: dashed;
-  width: 300px;
+.search-addon {
+  padding: 0 15px;
+  color: var(--text-secondary);
+  display: flex;
+  align-items: center;
+  opacity: 0.6;
 }
 
-.icon-btn {
-  background: var(--glass-bg);
-  border: 1px solid var(--glass-border);
-  color: var(--text-primary);
-  width: 45px;
-  height: 45px;
+.island-input {
+  background: transparent;
+  border: none;
+  outline: none;
+  color: #fff;
+  font-size: 0.95rem;
+  width: 250px;
+  height: 100%;
+  font-family: inherit;
+}
+
+.island-select {
+  background: transparent;
+  border: none;
+  border-left: 1px solid var(--island-border);
+  outline: none;
+  color: #fff;
+  height: 100%;
+  padding: 0 15px;
+  font-size: 0.9rem;
+  cursor: pointer;
+  appearance: none;
+  text-align: center;
+  transition: var(--transition);
+  font-family: inherit;
+}
+
+.island-select:hover {
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.island-btn {
+  background: transparent;
+  border: none;
+  border-left: 1px solid var(--island-border);
+  color: #fff;
+  height: 100%;
+  width: 50px;
   display: flex;
   align-items: center;
   justify-content: center;
-  border-radius: 12px;
   cursor: pointer;
   transition: var(--transition);
 }
 
-.icon-btn:hover {
-  background: var(--glass-border);
+.island-btn:hover {
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--accent-color);
+}
+
+.island-btn.active {
+  background: var(--accent-color);
+  color: var(--bg-color);
+}
+
+.island-btn.primary:hover {
+  background: var(--accent-color);
+  color: var(--bg-color);
+}
+
+.sync-section {
+  height: 46px;
+  display: flex;
+  align-items: center;
+}
+
+.icon-btn {
+  background: var(--island-bg);
+  backdrop-filter: blur(15px);
+  border: 1px solid var(--island-border);
+  color: var(--text-primary);
+  width: 46px;
+  height: 46px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 14px;
+  cursor: pointer;
+  transition: var(--transition);
+}
+
+.icon-btn:hover:not(:disabled) {
   border-color: var(--accent-color);
   color: var(--accent-color);
   transform: translateY(-2px);
 }
 
+.icon-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
 .media-section {
+  margin-top: 40px;
   margin-bottom: 60px;
 }
 

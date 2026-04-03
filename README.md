@@ -131,6 +131,19 @@ Contributions are welcome! Please follow these steps:
 4.  Push to the Branch (`git push origin feature/AmazingFeature`).
 5.  Open a Pull Request.
 
+## 🛣️ Future Functionalities (Help Required!)
+
+This project is constantly evolving, and we are looking for open-source contributors to help build the next phase of the Media Tracker! Here are the major features on our roadmap to make this a fully self-sufficient ecosystem:
+
+1. **Torrent Downloader Integration**: A built-in system to search and trigger torrent downloads directly from the web dashboard for planned media.
+2. **Auto-Locate Local Files**: A background daemon or script that automatically scans local directories for episodes and movies, attaching the correct local path to `library.json` so the "One-Click Play" feature works seamlessly.
+3. **Analytics & Statistics**: Translating your local JSON tracking history into visual data (e.g., total hours watched, genre breakdowns, and rating deviations).
+4. **Calendar & Notifications**: A visual calendar view plotting out exact air dates for tracking ongoing anime and TV shows without leaving the app.
+5. **Automated Metadata Refresh**: Implementing a lightweight Cron-Job that runs `mt-info` daily in the background to automatically update ongoing episode counts.
+6. **Cloud Export Engine**: A simple hook to backup your `library.json` or export your list back to official services (MAL, AniList, Trakt) to prevent data loss.
+
+If you are interested in building these out, please open an Issue or check the Contributing section!
+
 ---
 
 ## 📄 License

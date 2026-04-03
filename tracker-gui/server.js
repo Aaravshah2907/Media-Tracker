@@ -105,6 +105,32 @@ app.get('/api/search/:type/:query', async (req, res) => {
                 episodes: r.episodes || 0,
                 source: { provider: 'mal', id: r.mal_id.toString() }
             }));
+        } else if (type === 'manga') {
+            const aniRes = await axios.get(`https://api.jikan.moe/v4/manga?q=${q}`);
+            results = aniRes.data.data.map(r => ({
+                id: r.mal_id,
+                title: r.title_english || r.title,
+                type: 'manga',
+                year: r.published?.from?.split('-')[0],
+                poster_path: r.images?.jpg?.large_image_url,
+                overview: r.synopsis,
+                vote_average: r.score,
+                episodes: r.chapters || r.volumes || 0,
+                source: { provider: 'mal', id: r.mal_id.toString() }
+            }));
+        } else if (type === 'book') {
+            const obRes = await axios.get(`https://openlibrary.org/search.json?q=${q}&limit=20`);
+            results = obRes.data.docs.filter(r => r.key).map(r => ({
+                id: r.key.replace('/works/', ''),
+                title: r.title,
+                type: 'book',
+                year: r.first_publish_year?.toString() || '',
+                poster_path: r.cover_i ? `https://covers.openlibrary.org/b/id/${r.cover_i}-L.jpg` : null,
+                overview: r.first_sentence ? (typeof r.first_sentence === 'string' ? r.first_sentence : r.first_sentence[0]) : '',
+                vote_average: r.ratings_average || 0,
+                episodes: r.number_of_pages_median || 0,
+                source: { provider: 'openlibrary', id: r.key.replace('/works/', '') }
+            }));
         }
         res.json(results);
     } catch (err) {
@@ -141,20 +167,23 @@ app.post('/api/add-to-library', async (req, res) => {
             id: `${item.source.provider}:${item.source.id}`,
             title: item.title,
             type: item.type,
-            subtype: item.type === 'tv' ? 'series' : (item.type === 'movie' ? null : null),
+            subtype: item.type === 'tv' ? 'series' : null,
             status: "planned",
             progress: { 
                 current: 0, 
-                total: totalEpisodes || (item.type === 'movie' ? 1 : 0), 
+                total: totalEpisodes || (item.type === 'movie' ? 1 : null), 
                 unit: item.type === 'movie' ? "scene" : (item.type === 'book' ? "page" : "episode") 
             },
-            seasons: (item.type === 'tv' || item.type === 'anime') ? { current: 1, total: totalSeasonsCount } : null,
+            seasons: (item.type === 'tv' || item.type === 'anime') ? { current: 1, total: totalSeasonsCount } : { current: 0, total: null },
             metadata: { 
                 year: parseInt(item.year) || null,
-                release_date: item.release_date || null,
-                genres: []
+                release_date: item.release_date || (item.year ? item.year.toString() : null),
+                genres: item.genres || [],
+                author: item.author ? [item.author] : [],
+                series: item.series || "",
+                isbn: item.isbn || []
             },
-            source: item.source,
+            source: { provider: item.source.provider, id: `${item.source.provider}:${item.source.id}` },
             local: { path: "", available: false },
             timestamps: { added: now, updated: now },
             poster_path: item.poster_path, 
