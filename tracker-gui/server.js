@@ -57,41 +57,6 @@ const escapeShell = (arg) => {
     return `'${arg.replace(/'/g, "'\\''")}'`;
 };
 
-app.get('/api/find-episode-file', async (req, res) => {
-    const { dirPath, episodeNumber } = req.query;
-    if (!dirPath || !fs.existsSync(dirPath)) {
-        return res.status(404).json({ error: 'Directory not found' });
-    }
-
-    try {
-        const files = await fs.readdir(dirPath);
-        const epNum = parseInt(episodeNumber);
-        
-        // Patterns to match: E05, S01E05, [05], - 05, _05
-        const patterns = [
-            new RegExp(`[Ee]${String(epNum).padStart(2, '0')}[^0-9]`),
-            new RegExp(`[Ee]${epNum}[^0-9]`),
-            new RegExp(`\\[${String(epNum).padStart(2, '0')}\\]`),
-            new RegExp(`\\D${String(epNum).padStart(2, '0')}\\D`),
-            new RegExp(`\\D${epNum}\\D`)
-        ];
-
-        const match = files.find(file => {
-            const isVideo = /\.(mkv|mp4|avi|mov|m4v)$/i.test(file);
-            if (!isVideo) return false;
-            return patterns.some(p => p.test(file));
-        });
-
-        if (match) {
-            res.json({ filePath: path.join(dirPath, match) });
-        } else {
-            res.status(404).json({ error: 'Episode file not found' });
-        }
-    } catch (err) {
-        res.status(500).json({ error: 'Search failed' });
-    }
-});
-
 // Search Proxy API
 app.get('/api/search/:type/:query', async (req, res) => {
     const { type, query } = req.params;

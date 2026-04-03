@@ -297,18 +297,6 @@ const App = () => {
     return ia - ib;
   });
 
-  const handlePlayEp = async (epNum) => {
-    if (!selectedItem.local?.path) return;
-    try {
-        const res = await axios.get(`${API_BASE}/find-episode-file?dirPath=${encodeURIComponent(selectedItem.local.path)}&episodeNumber=${epNum}`);
-        if (res.data.filePath) {
-            await axios.post(`${API_BASE}/open-vlc`, { filePath: res.data.filePath });
-        }
-    } catch (e) {
-        alert("Episode file not found locally: " + (e.response?.data?.error || e.message));
-    }
-  };
-
   const getSeasons = () => {
     if (!selectedItem || !selectedCache) return [];
     if (selectedItem.type === 'anime' && selectedCache.jikanEpisodes) return [1];
@@ -681,13 +669,6 @@ const App = () => {
                       <div key={ep.id || ep.mal_id} className="episode-card">
                         <div className="ep-card-image">
                            <img src={ep.image?.medium || ep.image?.original || getImageUrl(selectedItem)} alt={ep.name || ep.title} />
-                           {selectedItem?.local?.available && (
-                               <div className="play-overlay" onClick={() => handlePlayEp(ep.number || ep.mal_id)}>
-                                   <div className="play-circle" style={{ width: 40, height: 40 }}>
-                                       <Play size={18} fill="currentColor" />
-                                   </div>
-                               </div>
-                           )}
                            {ep.season ? (
                                <span className="ep-tag">S{ep.season} E{ep.number}</span>
                            ) : (
