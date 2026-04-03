@@ -1,0 +1,17 @@
+# Media Data
+library.json
+cache/
+backups/
+format.json
+
+# Environment/Local specifics
+.DS_Store
+.local/
+.env
+
+# Node.js
+**/node_modules/
+**/dist/
+**/build/
+.npm
+*.log
