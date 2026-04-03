@@ -37,7 +37,7 @@ EOF
     fi
 
     # Extract fields
-    local id title status format episodes chapters volumes year genres description
+    local id title status format episodes chapters volumes year month day genres description release_date
     id=$(echo "$media" | jq -r '.id')
     title=$(echo "$media" | jq -r '.title.english // .title.romaji // .title.native // empty' | jq -R .)
     status=$(echo "$media" | jq -r '.status // "planned"' | jq -R .)
@@ -45,7 +45,18 @@ EOF
     episodes=$(echo "$media" | jq -r '.episodes // 1')
     chapters=$(echo "$media" | jq -r '.chapters // 1')
     volumes=$(echo "$media" | jq -r '.volumes // 1')
-    year=$(echo "$media" | jq -r '.startDate.year // null')
+    
+    year=$(echo "$media" | jq -r '.startDate.year // empty')
+    month=$(echo "$media" | jq -r '.startDate.month // empty')
+    day=$(echo "$media" | jq -r '.startDate.day // empty')
+    
+    # Format release_date YYYY-MM-DD
+    if [ -n "$year" ]; then
+        release_date="$year"
+        [ -n "$month" ] && release_date="${release_date}-$(printf "%02d" "$month")"
+        [ -n "$day" ] && release_date="${release_date}-$(printf "%02d" "$day")"
+    fi
+
     genres=$(echo "$media" | jq -c '.genres // []')
     description=$(echo "$media" | jq -r '.description // ""' | jq -R .)
 
@@ -60,8 +71,7 @@ EOF
         seasons_total=$volumes
         unit="chapter"
     fi
-
-    # Build JSON safely using jq
+    
     jq -n \
         --arg id "anilist:$id" \
         --arg title "$title" \
@@ -69,9 +79,10 @@ EOF
         --arg subtype "$subtype" \
         --arg status "$status" \
         --arg unit "$unit" \
+        --arg release_date "$release_date" \
         --argjson total "$progress_total" \
         --argjson seasons_total "$seasons_total" \
-        --argjson year "$year" \
+        --argjson year "${year:-null}" \
         --argjson genres "$genres" \
         --arg description "$description" \
         '{
@@ -82,7 +93,7 @@ EOF
           status: $status,
           progress: {current: 0, total: $total, unit: $unit},
           seasons: {current: 0, total: $seasons_total},
-          metadata: {year: $year, genres: $genres},
+          metadata: {year: $year, release_date: $release_date, genres: $genres},
           source: {provider: "anilist", id: ($id | split(":")[1])},
           local: {path: "", available: false},
           timestamps: {added: now | todateiso8601, updated: now | todateiso8601},

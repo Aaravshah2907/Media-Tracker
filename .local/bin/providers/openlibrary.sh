@@ -81,6 +81,7 @@ openlibrary_add() {
             seasons: { current: 0, total: null },
             metadata: {
                 year: $year,
+                release_date: (.first_publish_date // $year | tostring // null),
                 genres: $subjects,
                 author: [$author],
                 series: $series,

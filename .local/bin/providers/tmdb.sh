@@ -43,6 +43,7 @@ tmdb_add() {
             seasons: null,
             metadata: { 
                 year: (.release_date[0:4] // null), 
+                release_date: (.release_date // null),
                 genres: .genre_ids 
             },
             source: {

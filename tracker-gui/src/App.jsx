@@ -73,7 +73,7 @@ const App = () => {
                   let poster = null;
                   
                   if (item.type === 'anime' || item.type === 'manga') {
-                      poster = data.data?.Media?.coverImage?.large;
+                      poster = data.data?.Media?.coverImage?.extraLarge || data.data?.Media?.coverImage?.large;
                   } else if (item.type === 'tv') {
                       poster = data.image?.original || data.image?.medium;
                   } else if (item.type === 'book') {
@@ -110,8 +110,15 @@ const App = () => {
 
   const getImageUrl = (item) => {
     if (!item || !item.poster_path) return 'https://via.placeholder.com/500x750?text=No+Image';
-    if (item.poster_path.startsWith('http')) return item.poster_path;
-    return `https://image.tmdb.org/t/p/w500${item.poster_path}`;
+    if (item.poster_path.startsWith('http')) {
+        // Upgrade AniList images to large if possible (if captured as medium)
+        if (item.poster_path.includes('anilist.co') && item.poster_path.includes('/medium/')) {
+            return item.poster_path.replace('/medium/', '/large/');
+        }
+        return item.poster_path;
+    }
+    // TMDb - Upgrade w500 to w780 for higher quality
+    return `https://image.tmdb.org/t/p/w780${item.poster_path}`;
   };
 
   const safeLibrary = Array.isArray(library) ? library : [];
@@ -141,6 +148,17 @@ const App = () => {
     acc[type].push(item);
     return acc;
   }, {});
+
+  // Sort items within each type by full release date descending (newest first)
+  Object.keys(groupedLibrary).forEach(type => {
+    groupedLibrary[type].sort((a, b) => {
+      const dateA = a.metadata?.release_date || a.metadata?.year || "0";
+      const dateB = b.metadata?.release_date || b.metadata?.year || "0";
+      
+      // LocalCompare works for YYYY-MM-DD strings
+      return dateB.toString().localeCompare(dateA.toString());
+    });
+  });
 
   const orderOfTypes = ['movie', 'anime', 'tv', 'manga', 'book', 'series'];
   const sortedTypes = Object.keys(groupedLibrary).sort((a, b) => {
