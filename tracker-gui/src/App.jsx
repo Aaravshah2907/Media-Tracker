@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import axios from 'axios';
-import { Search, Loader2, Edit3, X, Save, ExternalLink, Terminal as TerminalIcon, RefreshCw, Send, ZapOff, CheckCircle, Folder, Play, Download, PlusCircle } from 'lucide-react';
+import { Search, Loader2, Edit3, X, Save, ExternalLink, RefreshCw, Send, ZapOff, CheckCircle, Folder, Play, Download, PlusCircle } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 
 const API_BASE = 'http://localhost:3001/api';
@@ -15,69 +15,20 @@ const App = () => {
   const [selectedSeason, setSelectedSeason] = useState(1);
   const [showLocalOnly, setShowLocalOnly] = useState(false);
   
-  // Terminal state
-  const [logs, setLogs] = useState([]);
-  const [showTerminal, setShowTerminal] = useState(false);
-  const [isScriptRunning, setIsScriptRunning] = useState(false);
-  const [termInput, setTermInput] = useState('');
-  const terminalEndRef = useRef(null);
-
-  // SSE Output listener
-  useEffect(() => {
-    const eventSource = new EventSource(`${API_BASE}/terminal/stream`);
-    eventSource.onmessage = (event) => {
-      const data = JSON.parse(event.data);
-      if (data.type === 'output' || data.type === 'error') {
-        setLogs(prev => [...prev, data.data.trim()]);
-      } else if (data.type === 'exit') {
-        setLogs(prev => [...prev, `> Process exited with code ${data.code}`]);
-        setIsScriptRunning(false);
-        fetchLibrary(); // Refresh UI
-      }
-    };
-    return () => eventSource.close();
-  }, []);
-
+  
   // INITIAL LOAD: Run mt-info silently
   useEffect(() => {
-    runSync(true);
+    runSync();
+    fetchLibrary();
   }, []);
 
-  const scrollToBottom = () => {
-    terminalEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  };
 
-  useEffect(() => {
-    if (showTerminal) scrollToBottom();
-  }, [logs, showTerminal]);
-
-  const runSync = async (silent = false) => {
-    setLogs(prev => [...prev, `> Starting library sync...`]);
-    if (!silent) setShowTerminal(true);
-    setIsScriptRunning(true);
+  const runSync = async () => {
     try {
       await axios.post(`${API_BASE}/sync`);
+      setTimeout(fetchLibrary, 2000); // Poll/Refresh after sync starts
     } catch (err) {
-      setLogs(prev => [...prev, `Error: ${err.response?.data?.error || err.message}`]);
-      setIsScriptRunning(false);
-    }
-  };
-
-  const handleTermInput = async (input) => {
-    try {
-        await axios.post(`${API_BASE}/terminal/input`, { input });
-        setLogs(prev => [...prev, `> Sent: ${input}`]);
-        setTermInput('');
-      } catch (err) {
-        setLogs(prev => [...prev, `Failed to send input: ${err.message}`]);
-      }
-  };
-
-  const killScript = async () => {
-    try {
-      await axios.post(`${API_BASE}/terminal/kill`);
-    } catch (err) {
-        // ignore
+      console.error('Sync failed', err);
     }
   };
 
@@ -148,7 +99,7 @@ const App = () => {
   const closeModal = () => {
     setSelectedItem(null);
     setEditing(false);
-    runSync(true); // SILENT Refresh on close
+    runSync(); // Silent Refresh on close
   };
 
   const getImageUrl = (item) => {
@@ -245,12 +196,8 @@ const App = () => {
             <PlusCircle size={20} />
           </button>
 
-          <button className="icon-btn" onClick={() => runSync(true)} title="Refresh Metadata">
+          <button className="icon-btn" onClick={() => runSync()} title="Refresh Metadata">
             <RefreshCw size={20} />
-          </button>
-          
-          <button className="icon-btn" onClick={() => setShowTerminal(!showTerminal)} title="Toggle Console">
-            <TerminalIcon size={20} />
           </button>
         </div>
       </header>
@@ -336,54 +283,6 @@ const App = () => {
         </div>
       )}
 
-      {/* Interactive Terminal View */}
-      <AnimatePresence>
-        {showTerminal && (
-            <motion.div 
-                className="terminal-view"
-                initial={{ height: 0 }}
-                animate={{ height: 350 }}
-                exit={{ height: 0 }}
-            >
-                <div className="terminal-header">
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                        <TerminalIcon size={14} />
-                        <span>MT INTERACTIVE TERMINAL</span>
-                    </div>
-                    <div style={{ display: 'flex', gap: 10 }}>
-                        {isScriptRunning && (
-                            <button className="term-ctrl-btn kill" onClick={killScript} title="Kill script">
-                                <ZapOff size={14} /> Abort
-                            </button>
-                        )}
-                        <button onClick={() => setLogs([])}>Clear</button>
-                        <button onClick={() => setShowTerminal(false)}><X size={16} /></button>
-                    </div>
-                </div>
-                
-                <div className="terminal-body scrollbar">
-                    {logs.map((log, i) => (
-                        <div key={i} className="log-line">{log}</div>
-                    ))}
-                    <div ref={terminalEndRef} />
-                </div>
-
-                <div className="terminal-input-row">
-                        <span className="term-prompt">$</span>
-                        <input 
-                            type="text" 
-                            className="term-stdin" 
-                            placeholder={isScriptRunning ? "Type selection and press Enter..." : "No active process..."}
-                            value={termInput}
-                            onChange={(e) => setTermInput(e.target.value)}
-                            onKeyDown={(e) => e.key === 'Enter' && handleTermInput(termInput)}
-                            disabled={!isScriptRunning}
-                        />
-                        {isScriptRunning && <Send size={14} style={{ marginRight: 15, opacity: 0.5 }} />}
-                    </div>
-            </motion.div>
-        )}
-      </AnimatePresence>
       <AnimatePresence>
         {selectedItem && (
           <div className="modal-overlay" onClick={closeModal}>
