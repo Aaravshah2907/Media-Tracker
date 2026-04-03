@@ -2,7 +2,7 @@
 # mt-cli: Enhanced Mega Worker for Tracker
 
 FILE_DIR="$HOME/.local/bin"
-DATA_DIR="$HOME/Documents/Personal/Tracker"
+DATA_DIR="${DATA_DIR:-$HOME/Documents/Personal/Tracker}"
 CACHE_DIR="$DATA_DIR/cache"
 PENDING="$CACHE_DIR/pending.json"
 
@@ -67,43 +67,43 @@ show_pending_summary() {
     fi
 }
 
-# -------------------------
-# CLI Menu
-# -------------------------
-
+echo "📚 Media Tracker: Mega CLI Worker"
 echo "==========================================="
-echo "📚 Tracker Mega CLI Worker"
-echo "==========================================="
-
-# Show pending info at start
 show_pending_summary
 echo "==========================================="
 
-PS3="Select a function to run (or 0 to quit): "
+PS3="👉 Select an operation (0 or q to quit): "
 
 options=(
     "mt-add (Add new media)"
-    "mt-list (List All Available)"
-    "mt-info (Fetch media info & cache)"
-    "mt-change (Backup media library)"
-    "mt-update (Update media progress)"
-    "mt-remove (Clean cache / old files)"
+    "mt-list (List all available)"
+    "mt-info (Sync metadata & cache)"
+    "mt-change (Change Metadata library)"
+    "mt-update (Update progress)"
+    "mt-remove (Clean cache)"
 )
 
-select opt in "${options[@]}"; do
-    case $REPLY in
-        0)
-            echo "Exiting."
-            break
-            ;;
-        3) run_info; break ;;
-        1) run_add; break ;;
-        4) run_change; break ;;
-        5) run_update; break ;;
-        6) run_remove; break ;;
-        2) run_list; break;;
-        *)
-            echo "Invalid option. Try again."
-            ;;
-    esac
+while true; do
+    select opt in "${options[@]}"; do
+        case $REPLY in
+            0|q|Q)
+                echo "👋 Exiting Tracker CLI."
+                exit 0
+                ;;
+            1) run_add; break ;;
+            2) run_list; break ;;
+            3) run_info; break ;;
+            4) run_change; break ;;
+            5) run_update; break ;;
+            6) run_remove; break ;;
+            *)
+                echo "❌ Invalid option '$REPLY'. Please choose 1-6 or 0/q."
+                break
+                ;;
+        esac
+    done
+    echo ""
+    echo "-------------------------------------------"
+    show_pending_summary
+    echo "-------------------------------------------"
 done

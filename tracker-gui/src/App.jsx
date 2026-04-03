@@ -14,6 +14,7 @@ const App = () => {
   const [selectedCache, setSelectedCache] = useState(null);
   const [selectedSeason, setSelectedSeason] = useState(1);
   const [showLocalOnly, setShowLocalOnly] = useState(false);
+  const [syncing, setSyncing] = useState(false);
   
   
   // INITIAL LOAD: Run mt-info silently
@@ -24,11 +25,16 @@ const App = () => {
 
 
   const runSync = async () => {
+    setSyncing(true);
     try {
       await axios.post(`${API_BASE}/sync`);
-      setTimeout(fetchLibrary, 2000); // Poll/Refresh after sync starts
+      setTimeout(() => {
+        fetchLibrary();
+        setSyncing(false);
+      }, 5000); // Wait for script to start/progress
     } catch (err) {
       console.error('Sync failed', err);
+      setSyncing(false);
     }
   };
 
@@ -196,8 +202,13 @@ const App = () => {
             <PlusCircle size={20} />
           </button>
 
-          <button className="icon-btn" onClick={() => runSync()} title="Refresh Metadata">
-            <RefreshCw size={20} />
+          <button 
+            className={`icon-btn ${syncing ? 'spinning' : ''}`} 
+            onClick={() => runSync()} 
+            title={syncing ? "Syncing..." : "Refresh Metadata"}
+            disabled={syncing}
+          >
+            {syncing ? <Loader2 size={20} className="loader" /> : <RefreshCw size={20} />}
           </button>
         </div>
       </header>

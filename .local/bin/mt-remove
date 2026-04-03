@@ -2,7 +2,7 @@
 
 set -euo pipefail
 
-DATA_DIR="$HOME/Documents/Personal/Tracker"
+DATA_DIR="${DATA_DIR:-$HOME/Documents/Personal/Tracker}"
 LIB="$DATA_DIR/library.json"
 
 selection=$(jq -r '

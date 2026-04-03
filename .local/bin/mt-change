@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-DATA_DIR="$HOME/Documents/Personal/Tracker"
+DATA_DIR="${DATA_DIR:-$HOME/Documents/Personal/Tracker}"
 LIBRARY_JSON="$DATA_DIR/library.json"
 BACKUP_DIR="$DATA_DIR/backups"
 

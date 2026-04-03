@@ -15,7 +15,8 @@ const PORT = 3001;
 const bus = new EventEmitter();
 
 // Paths
-const DATA_DIR = path.join(process.env.HOME, 'Documents/Personal/Tracker');
+// Paths - Prefer DATA_DIR environment variable
+const DATA_DIR = process.env.DATA_DIR || path.join(process.env.HOME, 'Documents/Personal/Tracker');
 const LIBRARY_FILE = path.join(DATA_DIR, 'library.json');
 const CACHE_DIR = path.join(DATA_DIR, 'cache');
 
