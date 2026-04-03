@@ -1,0 +1,42 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+DATA_DIR="$HOME/Documents/Personal/Tracker"
+LIB="$DATA_DIR/library.json"
+
+TYPE=""
+STATUS=""
+
+# --- Parse args ---
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --type)
+      TYPE="$2"
+      shift 2
+      ;;
+    --status)
+      STATUS="$2"
+      shift 2
+      ;;
+    *)
+      echo "Unknown argument: $1"
+      exit 1
+      ;;
+  esac
+done
+
+[ ! -s "$LIB" ] && echo "Library empty" && exit 0
+
+jq -r "
+.media[]
+$( [ -n "$TYPE" ] && echo "| select(.type == \"$TYPE\")" )
+$( [ -n "$STATUS" ] && echo "| select(.status == \"$STATUS\")" )
+| if .type == \"book\" then
+    \"\(.title) by \(.metadata.author // \"Unknown\") [\(.type)] (\(.status))
+     → \(.progress.current)/\(.progress.total) \(.progress.unit)\"
+  else
+    \"\(.title) [\(.type)] (\(.status))
+     → \(.progress.current)/\(.progress.total) \(.progress.unit)\"
+  end
+" "$LIB"

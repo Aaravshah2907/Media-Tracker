@@ -1,0 +1,110 @@
+#!/usr/bin/env bash
+
+DATA_DIR="$HOME/Documents/Personal/Tracker"
+LIBRARY_JSON="$DATA_DIR/library.json"
+BACKUP_DIR="$DATA_DIR/backups"
+
+# Create backups directory if it doesn't exist
+mkdir -p "$BACKUP_DIR"
+
+# 1️⃣ Create timestamped backup
+TIMESTAMP=$(date +%Y%m%d_%H%M%S)
+BACKUP_JSON="$BACKUP_DIR/library_$TIMESTAMP.json.bak"
+cp "$LIBRARY_JSON" "$BACKUP_JSON"
+echo "Backup created: $BACKUP_JSON"
+
+EXIT=false
+while ! $EXIT; do
+    # --- Select type ---
+    TYPES=$(jq -r '.media[].type' "$LIBRARY_JSON" | sort -u)
+    if [[ -z "$TYPES" ]]; then
+        echo "No media types found in library."
+        break
+    fi
+
+    TYPE=$(echo "$TYPES" | fzf --prompt="Select type to update (q to quit): ")
+    if [[ "$TYPE" == "~" ]]; then
+        break
+    elif [[ "$TYPE" == "q" || -z "$TYPE" ]]; then
+        echo "No type selected. Exiting."
+        break
+    fi
+
+    # --- Check for titles of this type ---
+    TITLES=$(jq -r --arg TYPE "$TYPE" '.media[] | select(.type==$TYPE) | .title' "$LIBRARY_JSON")
+    if [[ -z "$TITLES" ]]; then
+        echo "No items of type '$TYPE' found."
+        sleep 0.5
+        continue
+    fi
+
+    # --- Title selection loop ---
+    while true; do
+        TITLE=$(echo "$TITLES" | fzf --prompt="Select $TYPE to edit (q to go back, ~ to quit): ")
+        if [[ "$TITLE" == "~" ]]; then
+            EXIT=true
+            break 2
+        elif [[ "$TITLE" == "q" || -z "$TITLE" ]]; then
+            break
+        fi
+
+        # --- Load current values ---
+        ITEM=$(jq -r --arg TITLE "$TITLE" --arg TYPE "$TYPE" '.media[] | select(.title==$TITLE and .type==$TYPE)' "$LIBRARY_JSON")
+        STATUS=$(echo "$ITEM" | jq -r '.status // ""')
+        CURRENT=$(echo "$ITEM" | jq -r '.progress.current // 0')
+        TOTAL=$(echo "$ITEM" | jq -r '.progress.total // 0')
+        if [[ "$TYPE" == "tv" || "$TYPE" == "anime" ]]; then
+            SEASONS_CURRENT=$(echo "$ITEM" | jq -r '.seasons.current // 0')
+            SEASONS_TOTAL=$(echo "$ITEM" | jq -r '.seasons.total // 0')
+        fi
+
+        # --- Editable prompts ---
+        echo "Editing: $TITLE ($TYPE)"
+        read -p "Status [$STATUS]: " NEW_STATUS
+        NEW_STATUS=${NEW_STATUS:-$STATUS}
+
+        read -p "Progress current [$CURRENT]: " NEW_CURRENT
+        NEW_CURRENT=${NEW_CURRENT:-$CURRENT}
+
+        read -p "Progress total [$TOTAL]: " NEW_TOTAL
+        NEW_TOTAL=${NEW_TOTAL:-$TOTAL}
+
+        if [[ "$TYPE" == "tv" || "$TYPE" == "anime" ]]; then
+            read -p "Seasons current [$SEASONS_CURRENT]: " NEW_SEASONS_CURRENT
+            NEW_SEASONS_CURRENT=${NEW_SEASONS_CURRENT:-$SEASONS_CURRENT}
+
+            read -p "Seasons total [$SEASONS_TOTAL]: " NEW_SEASONS_TOTAL
+            NEW_SEASONS_TOTAL=${NEW_SEASONS_TOTAL:-$SEASONS_TOTAL}
+        fi
+
+        # --- Update JSON in-place ---
+        tmp=$(mktemp)
+        jq --arg TITLE "$TITLE" --arg TYPE "$TYPE" \
+           --arg STATUS "$NEW_STATUS" \
+           --argjson CURRENT "$NEW_CURRENT" \
+           --argjson TOTAL "$NEW_TOTAL" \
+           --argjson SEASONS_CURRENT "${NEW_SEASONS_CURRENT:-0}" \
+           --argjson SEASONS_TOTAL "${NEW_SEASONS_TOTAL:-0}" \
+           '(.media[] | select(.title==$TITLE and .type==$TYPE) | .status) |= $STATUS |
+            (.media[] | select(.title==$TITLE and .type==$TYPE) | .progress.current) |= $CURRENT |
+            (.media[] | select(.title==$TITLE and .type==$TYPE) | .progress.total) |= $TOTAL |
+            if .type=="tv" or .type=="anime" then
+                (.seasons.current) |= $SEASONS_CURRENT |
+                (.seasons.total) |= $SEASONS_TOTAL
+            else . end |
+            if .type=="tv" then
+                .last_updated = (now | todate)
+            else .
+            end' "$LIBRARY_JSON" > "$tmp" && mv "$tmp" "$LIBRARY_JSON"
+
+        echo "✅ Updated $TITLE"
+        sleep 0.2
+    done
+done
+
+echo "Exited mt-update."
+
+# --- Remove oldest backups, keep only last 10 ---
+echo "Cleaning old backups, keeping only 10 latest..."
+ls -1t "$BACKUP_DIR"/library_*.json.bak | tail -n +11 | xargs -r rm
+echo "Done."

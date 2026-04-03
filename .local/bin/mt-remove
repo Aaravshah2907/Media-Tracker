@@ -1,0 +1,23 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+DATA_DIR="$HOME/Documents/Personal/Tracker"
+LIB="$DATA_DIR/library.json"
+
+selection=$(jq -r '
+.media[]
+| "\(.title) | ID:\(.id)"
+' "$LIB" | fzf)
+
+[ -z "$selection" ] && exit 1
+
+id=$(echo "$selection" | sed -E 's/.*ID:(.*)/\1/')
+
+updated=$(jq --arg id "$id" '
+.media |= map(select(.id != $id))
+' "$LIB")
+
+echo "$updated" > "$LIB"
+
+echo "Removed"

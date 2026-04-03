@@ -1,0 +1,175 @@
+#!/usr/bin/env bash
+# mt-info: Fetch media info for all library items and cache them
+# Refreshes pending.json at the start every run
+
+DATA_DIR="$HOME/Documents/Personal/Tracker"
+LIBRARY="$DATA_DIR/library.json"
+CACHE_DIR="$DATA_DIR/cache"
+PENDING="$CACHE_DIR/pending.json"
+
+mkdir -p "$CACHE_DIR/anime" "$CACHE_DIR/manga" "$CACHE_DIR/tv" "$CACHE_DIR/movie" "$CACHE_DIR/book"
+
+# -------------------------
+# Load TMDB token from env
+# -------------------------
+ENV_FILE="$HOME/.config/mt/.env"
+if [[ -f "$ENV_FILE" ]]; then
+    # shellcheck disable=SC1090
+    source "$ENV_FILE"
+else
+    echo "TMDB token file not found: $ENV_FILE"
+    exit 1
+fi
+
+if [[ -z "$TMDB_TOKEN" ]]; then
+    echo "TMDB_TOKEN is not set in $ENV_FILE"
+    exit 1
+fi
+
+# -------------------------
+# TMDB Bearer token
+# -------------------------
+TMDB_TOKEN="YOUR_TMDB_ACCESS_TOKEN"
+
+# -------------------------
+# Functions to fetch data
+# -------------------------
+
+fetch_anilist() {
+    local id="$1"
+    local type="$2"
+    local file="$CACHE_DIR/$type/anilist_${id}.json"
+
+    [[ -f "$file" ]] && { echo "Cache exists for $type $id, skipping."; return; }
+
+    query='
+    query ($id: Int) {
+      Media(id: $id) {
+        id
+        title { romaji english native }
+        type
+        format
+        status
+        episodes
+        chapters
+        volumes
+        genres
+        description
+        startDate { year month day }
+        endDate { year month day }
+        averageScore
+        popularity
+        coverImage { large medium }
+      }
+    }'
+
+    json=$(jq -n --argjson id "$id" --arg query "$query" '{query: $query, variables: {id: $id|tonumber}}')
+
+    curl -s -X POST "https://graphql.anilist.co" \
+        -H "Content-Type: application/json" \
+        -d "$json" | jq . > "$file"
+
+    echo "Saved $type $id to $file"
+}
+
+fetch_tv() {
+    local id="$1"
+    local file="$CACHE_DIR/tv/tvmaze_${id}.json"
+
+    [[ -f "$file" ]] && { echo "Cache exists for tv $id, skipping."; return; }
+
+    curl -s "https://api.tvmaze.com/shows/${id}?embed=episodes" | jq . > "$file"
+    echo "Saved tv $id to $file"
+}
+
+fetch_movie() {
+    local id="$1"
+    local file="$CACHE_DIR/movie/tmdb_${id}.json"
+
+    [[ -f "$file" ]] && { echo "Cache exists for movie $id, skipping."; return; }
+
+    curl -s "https://api.themoviedb.org/3/movie/${id}?language=en-US" \
+         -H "Authorization: Bearer $TMDB_TOKEN" \
+         -H "accept: application/json" | jq . > "$file"
+
+    echo "Saved movie $id to $file"
+}
+
+fetch_book() {
+    local id="$1"
+    local path="${id#openlibrary:}"
+    local safe_id="${id//[:\/]/_}"
+    local file="$CACHE_DIR/book/openlibrary_${safe_id}.json"
+
+    [[ -f "$file" ]] && { echo "Cache exists for book $id, skipping."; return; }
+
+    curl -s "https://openlibrary.org${path}.json" | jq . > "$file"
+
+    if [[ ! -s "$file" ]]; then
+        echo "Failed to fetch book $id from OpenLibrary."
+        rm -f "$file"
+        return 1
+    fi
+
+    echo "Saved book $id to $file"
+}
+
+# -------------------------
+# MAIN SCRIPT
+# -------------------------
+
+# Refresh pending.json at start
+echo "[]" > "$PENDING"
+echo "Refreshed pending.json"
+
+# Build pending list by checking cache
+jq -c '.media[]' "$LIBRARY" | while read -r item; do
+    type=$(echo "$item" | jq -r '.type')
+    provider=$(echo "$item" | jq -r '.source.provider')
+    id=$(echo "$item" | jq -r '.source.id')
+    title=$(echo "$item" | jq -r '.title')
+
+    # Determine cache file path
+    case "$type" in
+        anime|manga) file="$CACHE_DIR/$type/anilist_${id}.json";;
+        tv)          file="$CACHE_DIR/tv/tvmaze_${id}.json";;
+        movie)       file="$CACHE_DIR/movie/tmdb_${id}.json";;
+        book)        file="$CACHE_DIR/book/openlibrary_${id//:/_}.json"
+            safe_id="${id//[:\/]/_}"
+            file="$CACHE_DIR/book/openlibrary_${safe_id}.json"
+            ;;
+        *)           echo "Unknown type: $type"; continue;;
+    esac
+
+    # If cache missing, add to pending
+    if [[ ! -f "$file" ]]; then
+        jq --arg type "$type" --arg provider "$provider" --arg id "$id" --arg title "$title" \
+            '. += [{"type":$type,"provider":$provider,"id":$id,"title":$title}]' \
+            "$PENDING" > "$PENDING.tmp" && mv "$PENDING.tmp" "$PENDING"
+    fi
+done
+
+echo "Pending list rebuilt: $PENDING"
+
+# Fetch pending items
+jq -c '.[]' "$PENDING" | while read -r item; do
+    type=$(echo "$item" | jq -r '.type')
+    id=$(echo "$item" | jq -r '.id')
+
+    case "$type" in
+        anime|manga)
+            fetch_anilist "$id" "$type"
+            ;;
+        tv)
+            fetch_tv "$id"
+            ;;
+        movie)
+            fetch_movie "$id"
+            ;;
+        book)
+            fetch_book "$id"
+            ;;
+    esac
+done
+
+echo "All pending items processed."

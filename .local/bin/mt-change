@@ -1,0 +1,132 @@
+#!/usr/bin/env bash
+
+DATA_DIR="$HOME/Documents/Personal/Tracker"
+LIBRARY_JSON="$DATA_DIR/library.json"
+BACKUP_DIR="$DATA_DIR/backups"
+
+mkdir -p "$BACKUP_DIR"
+
+# Rotate backups: keep only 10 newest
+ls -1tr "$BACKUP_DIR"/library_*.json 2>/dev/null | head -n -10 | xargs -r rm
+
+# Make new backup
+BACKUP_JSON="$BACKUP_DIR/library_$(date +%s).json"
+cp "$LIBRARY_JSON" "$BACKUP_JSON"
+
+echo "Backup created at $BACKUP_JSON"
+
+while true; do
+    # 1️⃣ Select type
+    TYPE=$(jq -r '.media[].type' "$LIBRARY_JSON" | sort -u | fzf --prompt="Select type to edit (q to quit): ")
+    [[ -z "$TYPE" || "$TYPE" == "q" || "$TYPE" == "~" ]] && break
+
+    while true; do
+        # 2️⃣ Select title
+        TITLES=$(jq -r --arg TYPE "$TYPE" '.media[] | select(.type==$TYPE) | .title' "$LIBRARY_JSON")
+        TITLE=$(echo "$TITLES" | fzf --prompt="Select $TYPE to edit (q to go back): ")
+        [[ -z "$TITLE" || "$TITLE" == "q" || "$TITLE" == "~" ]] && break
+
+        # 3️⃣ Load current values
+        ITEM=$(jq -r --arg TITLE "$TITLE" --arg TYPE "$TYPE" '.media[] | select(.title==$TITLE and .type==$TYPE)' "$LIBRARY_JSON")
+
+        STATUS=$(echo "$ITEM" | jq -r '.status // ""')
+        CURRENT=$(echo "$ITEM" | jq -r '.progress.current // 0')
+        TOTAL=$(echo "$ITEM" | jq -r '.progress.total // 0')
+        UNIT=$(echo "$ITEM" | jq -r '.progress.unit // ""')
+
+        SEASONS_CURRENT=$(echo "$ITEM" | jq -r '.seasons.current // 0')
+        SEASONS_TOTAL=$(echo "$ITEM" | jq -r '.seasons.total // 0')
+
+        YEAR=$(echo "$ITEM" | jq -r '.metadata.year // ""')
+        GENRES=$(echo "$ITEM" | jq -r '.metadata.genres // [] | join(", ")')
+        AUTHOR=$(echo "$ITEM" | jq -r '.metadata.author // [] | join(", ")')
+        SERIES=$(echo "$ITEM" | jq -r '.metadata.series // ""')
+
+        LOCAL_PATH=$(echo "$ITEM" | jq -r '.local.path // ""')
+        AVAILABLE=$(echo "$ITEM" | jq -r '.local.available // false')
+        OVERVIEW=$(echo "$ITEM" | jq -r '.overview // ""')
+
+        echo "Editing: $TITLE ($TYPE)"
+        
+        # 4️⃣ Editable prompts
+        read -p "Status [$STATUS]: " NEW_STATUS
+        NEW_STATUS=${NEW_STATUS:-$STATUS}
+
+        read -p "Progress current [$CURRENT]: " NEW_CURRENT
+        NEW_CURRENT=${NEW_CURRENT:-$CURRENT}
+
+        read -p "Progress total [$TOTAL]: " NEW_TOTAL
+        NEW_TOTAL=${NEW_TOTAL:-$TOTAL}
+
+        read -p "Progress unit [$UNIT]: " NEW_UNIT
+        NEW_UNIT=${NEW_UNIT:-$UNIT}
+
+        if [[ "$TYPE" == "tv" || "$TYPE" == "anime" || "$TYPE" == "manga" ]]; then
+            read -p "Seasons current [$SEASONS_CURRENT]: " NEW_SEASONS_CURRENT
+            NEW_SEASONS_CURRENT=${NEW_SEASONS_CURRENT:-$SEASONS_CURRENT}
+
+            read -p "Seasons total [$SEASONS_TOTAL]: " NEW_SEASONS_TOTAL
+            NEW_SEASONS_TOTAL=${NEW_SEASONS_TOTAL:-$SEASONS_TOTAL}
+        fi
+
+        read -p "Metadata year [$YEAR]: " NEW_YEAR
+        NEW_YEAR=${NEW_YEAR:-$YEAR}
+
+        read -p "Metadata genres (comma separated) [$GENRES]: " NEW_GENRES
+        NEW_GENRES=${NEW_GENRES:-$GENRES}
+        GENRES_ARRAY=$(echo "$NEW_GENRES" | jq -R 'split(",") | map(gsub("^ +| +$"; "")) | map(select(length>0))')
+
+        read -p "Metadata author(s) (comma separated) [$AUTHOR]: " NEW_AUTHOR
+        NEW_AUTHOR=${NEW_AUTHOR:-$AUTHOR}
+        AUTHOR_ARRAY=$(echo "$NEW_AUTHOR" | jq -R 'split(",") | map(gsub("^ +| +$"; "")) | map(select(length>0))')
+
+        read -p "Metadata series [$SERIES]: " NEW_SERIES
+        NEW_SERIES=${NEW_SERIES:-$SERIES}
+
+        read -p "Local path [$LOCAL_PATH]: " NEW_LOCAL_PATH
+        NEW_LOCAL_PATH=${NEW_LOCAL_PATH:-$LOCAL_PATH}
+
+        read -p "Available (true/false) [$AVAILABLE]: " NEW_AVAILABLE
+        NEW_AVAILABLE=${NEW_AVAILABLE:-$AVAILABLE}
+
+        read -p "Overview [$OVERVIEW]: " NEW_OVERVIEW
+        NEW_OVERVIEW=${NEW_OVERVIEW:-$OVERVIEW}
+
+        # 5️⃣ Update JSON in-place
+        jq --arg TITLE "$TITLE" --arg TYPE "$TYPE" \
+           --arg STATUS "$NEW_STATUS" \
+           --argjson CURRENT "$NEW_CURRENT" \
+           --argjson TOTAL "$NEW_TOTAL" \
+           --arg UNIT "$NEW_UNIT" \
+           --argjson SEASONS_CURRENT "${NEW_SEASONS_CURRENT:-0}" \
+           --argjson SEASONS_TOTAL "${NEW_SEASONS_TOTAL:-0}" \
+           --arg YEAR "$NEW_YEAR" \
+           --argjson GENRES "$GENRES_ARRAY" \
+           --argjson AUTHOR "$AUTHOR_ARRAY" \
+           --arg SERIES "$NEW_SERIES" \
+           --arg LOCAL_PATH "$NEW_LOCAL_PATH" \
+           --argjson AVAILABLE "$NEW_AVAILABLE" \
+           --arg OVERVIEW "$NEW_OVERVIEW" \
+           '(.media[] | select(.title==$TITLE and .type==$TYPE) | .status) |= $STATUS |
+            (.media[] | select(.title==$TITLE and .type==$TYPE) | .progress.current) |= $CURRENT |
+            (.media[] | select(.title==$TITLE and .type==$TYPE) | .progress.total) |= $TOTAL |
+            (.media[] | select(.title==$TITLE and .type==$TYPE) | .progress.unit) |= $UNIT |
+            if .type=="tv" or .type=="anime" or .type=="manga" then
+                (.seasons.current) |= $SEASONS_CURRENT |
+                (.seasons.total) |= $SEASONS_TOTAL
+            else . end |
+            (.media[] | select(.title==$TITLE and .type==$TYPE) | .metadata.year) |= $YEAR |
+            (.media[] | select(.title==$TITLE and .type==$TYPE) | .metadata.genres) |= $GENRES |
+            (.media[] | select(.title==$TITLE and .type==$TYPE) | .metadata.author) |= $AUTHOR |
+            (.media[] | select(.title==$TITLE and .type==$TYPE) | .metadata.series) |= $SERIES |
+            (.media[] | select(.title==$TITLE and .type==$TYPE) | .local.path) |= $LOCAL_PATH |
+            (.media[] | select(.title==$TITLE and .type==$TYPE) | .local.available) |= $AVAILABLE |
+            (.media[] | select(.title==$TITLE and .type==$TYPE) | .overview) |= $OVERVIEW
+           ' "$LIBRARY_JSON" > "${LIBRARY_JSON}.tmp" && mv "${LIBRARY_JSON}.tmp" "$LIBRARY_JSON"
+
+        echo "✅ Updated $TITLE"
+        sleep 0.2
+    done
+done
+
+echo "Exited mt-change. Backup saved at $BACKUP_JSON"

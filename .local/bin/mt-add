@@ -1,0 +1,88 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+DATA_DIR="$HOME/Documents/Personal/Tracker"
+LIB="$DATA_DIR/library.json"
+PROVIDERS="$HOME/.local/bin/providers"
+
+TYPE="tv"
+SUBTYPE=""
+query=""
+
+# --- Parse args ---
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --type)
+      TYPE="$2"
+      shift 2
+      ;;
+    --subtype)
+      SUBTYPE="$2"
+      shift 2
+      ;;
+    *)
+      query+="$1 "
+      shift
+      ;;
+  esac
+done
+
+query=$(echo "$query" | xargs)
+
+if [ -z "$query" ]; then
+  echo "Usage: mt-add <title> [--type tv|anime|manga|movie|book] [--subtype <subtype>]"
+  exit 1
+fi
+
+# --- Ensure library ---
+mkdir -p "$DATA_DIR"
+if [ ! -s "$LIB" ] || ! jq empty "$LIB" >/dev/null 2>&1; then
+  echo '{ "media": [] }' > "$LIB"
+fi
+
+echo "Searching ($TYPE): $query"
+
+# --- Load provider ---
+case "$TYPE" in
+  tv)
+    source "$PROVIDERS/tvmaze.sh"
+    entry=$(tvmaze_add "$query")
+    ;;
+  anime)
+    source "$PROVIDERS/anilist.sh"
+    entry=$(anilist_add "$query" "anime" "$SUBTYPE")
+    ;;
+  manga)
+    source "$PROVIDERS/anilist.sh"
+    entry=$(anilist_add "$query" "manga" "$SUBTYPE")
+    ;;
+  movie)
+    source "$PROVIDERS/tmdb.sh"
+    entry=$(tmdb_add "$query")
+    ;;
+  book)
+    source "$PROVIDERS/openlibrary.sh"
+    entry=$(openlibrary_add "$query")
+    ;;
+  *)
+    echo "Unsupported type: $TYPE"
+    exit 1
+    ;;
+esac
+
+# --- Prevent duplicates ---
+id=$(echo "$entry" | jq -r '.id')
+
+if jq -e --arg id "$id" '.media[]? | select(.id == $id)' "$LIB" > /dev/null; then
+  echo "Already exists"
+  exit 0
+fi
+
+# --- Merge ---
+updated=$(jq --argjson entry "$entry" '
+  .media = (.media // []) + [$entry]
+' "$LIB")
+
+echo "$updated" > "$LIB"
+
+echo "Added: $(echo "$entry" | jq -r '.title')"

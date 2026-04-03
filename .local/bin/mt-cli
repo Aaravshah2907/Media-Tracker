@@ -1,0 +1,109 @@
+#!/usr/bin/env bash
+# mt-cli: Enhanced Mega Worker for Tracker
+
+FILE_DIR="$HOME/.local/bin"
+DATA_DIR="$HOME/Documents/Personal/Tracker"
+CACHE_DIR="$DATA_DIR/cache"
+PENDING="$CACHE_DIR/pending.json"
+
+# -------------------------
+# Function Definitions
+# -------------------------
+
+run_info() {
+    echo "Running mt-info..."
+    "$FILE_DIR/mt-info"
+}
+
+run_change() {
+    echo "Running mt-info..."
+    "$FILE_DIR/mt-change"
+}
+
+run_add() {
+    echo "Running mt-add..."
+    read -rp "Enter media title to add: " add_title
+    read -rp "Enter media type (tv|anime|manga|movie|book) [default: tv]: " add_type
+    add_type=${add_type:-tv}  # default to tv if empty
+    "$FILE_DIR/mt-add" "$add_title" --type "$add_type"
+}
+
+run_list(){
+    echo "Running mt-list"
+    "$FILE_DIR/mt-list"
+}
+
+run_update() {
+    echo "Running mt-update..."
+    "$FILE_DIR/mt-update"
+}
+
+run_remove() {
+    echo "Running mt-clean..."
+    "$FILE_DIR/mt-remove"
+}
+
+
+# -------------------------
+# Show Pending Summary
+# -------------------------
+show_pending_summary() {
+    if [[ ! -f "$PENDING" ]]; then
+        echo "No pending.json found."
+        return
+    fi
+
+    total=$(jq length "$PENDING")
+    echo "📌 Pending items: $total"
+
+    # Count per media type
+    jq -r 'group_by(.type) | map({type: .[0].type, count: length})[] | "\(.type): \(.count)"' "$PENDING" \
+        | while read -r line; do echo "   - $line"; done
+
+    # List titles
+    if [[ $total -gt 0 ]]; then
+        echo "   Titles:"
+        jq -r '.[] | "     • " + .title' "$PENDING"
+    fi
+}
+
+# -------------------------
+# CLI Menu
+# -------------------------
+
+echo "==========================================="
+echo "📚 Tracker Mega CLI Worker"
+echo "==========================================="
+
+# Show pending info at start
+show_pending_summary
+echo "==========================================="
+
+PS3="Select a function to run (or 0 to quit): "
+
+options=(
+    "mt-add (Add new media)"
+    "mt-list (List All Available)"
+    "mt-info (Fetch media info & cache)"
+    "mt-change (Backup media library)"
+    "mt-update (Update media progress)"
+    "mt-remove (Clean cache / old files)"
+)
+
+select opt in "${options[@]}"; do
+    case $REPLY in
+        0)
+            echo "Exiting."
+            break
+            ;;
+        3) run_info; break ;;
+        1) run_add; break ;;
+        4) run_change; break ;;
+        5) run_update; break ;;
+        6) run_remove; break ;;
+        2) run_list; break;;
+        *)
+            echo "Invalid option. Try again."
+            ;;
+    esac
+done
