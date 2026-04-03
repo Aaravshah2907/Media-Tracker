@@ -19,6 +19,7 @@ A high-performance, aesthetic personal media tracker designed for Movies, TV Sho
 - **Interactive Filtering**: Dynamic "Any Rating" header selector allows you to instantly filter your library (e.g., only show items rated 8.5+).
 
 ### 🖥️ Cinematic Web Dashboard
+- **Pure Web Discovery**: Directly search and add media from Jikan, TVMaze, and TMDb without ever opening the terminal.
 - **Glassmorphism UI**: High-end React interface built with Framer Motion and responsive layouts.
 - **Pixel-Perfect Modals**: Posters are locked to a cinematic 2:3 aspect ratio, ensuring no distortion across detail views.
 - **Offline Cache**: Lightning-fast performance by serving metadata from a local JSON-based cache directory.
@@ -94,12 +95,22 @@ cp .local/bin/providers/*.sh ~/.local/bin/providers/
 chmod +x ~/.local/bin/mt-* ~/.local/bin/providers/*.sh
 ```
 
-#### 5. Launch the Web Interface
+#### 5. Build and Launch the Dashboard
+For the fastest, "Studio-Grade" experience, it is highly recommended to compile the app into production mode:
 ```bash
 cd tracker-gui
 npm install
-npm run dev
+npm run build
+node server.js
 ```
+The dashboard will be served instantly at `http://localhost:3001`.
+
+#### 🚀 Pro-Tip: The Terminal Alias
+Make launching your tracker instant by adding a shortcut to your `.zshrc` or `.bashrc`:
+```bash
+echo 'alias tracker="cd ~/Documents/Personal/Tracker/tracker-gui && node server.js"' >> ~/.zshrc && source ~/.zshrc
+```
+Now, just type `tracker` in your terminal anytime to launch your library!
 
 ---
 
