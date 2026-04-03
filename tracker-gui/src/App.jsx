@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import axios from 'axios';
-import { Search, Loader2, Edit3, X, Save, ExternalLink, RefreshCw, Send, ZapOff, CheckCircle, Folder, Play, Download, PlusCircle } from 'lucide-react';
+import { Search, Loader2, Edit3, X, Save, ExternalLink, RefreshCw, Send, ZapOff, CheckCircle, Folder, Play, Download, PlusCircle, Trash2, Plus } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 
 const API_BASE = 'http://localhost:3001/api';
@@ -9,11 +9,16 @@ const App = () => {
   const [library, setLibrary] = useState([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
+  const [isSearching, setIsSearching] = useState(false);
+  const [searchResults, setSearchResults] = useState([]);
+  const [activeTab, setActiveTab] = useState('movie');
   const [selectedItem, setSelectedItem] = useState(null);
   const [editing, setEditing] = useState(false);
   const [selectedCache, setSelectedCache] = useState(null);
   const [selectedSeason, setSelectedSeason] = useState(1);
   const [showLocalOnly, setShowLocalOnly] = useState(false);
+  const [statusFilter, setStatusFilter] = useState('all');
+  const [minRatingFilter, setMinRatingFilter] = useState(0);
   const [syncing, setSyncing] = useState(false);
   
   
@@ -42,7 +47,34 @@ const App = () => {
     if (!item) return;
     try {
         const res = await axios.get(`${API_BASE}/cache/${item.type}/${item.id}`);
-        setSelectedCache(res.data);
+        let data = res.data;
+
+        // Jikan Enrichment for Anime
+        if (item.type === 'anime') {
+            let malId = data.data?.Media?.idMal || data.source?.id;
+            if (!malId && item.id.startsWith('mal:')) {
+                malId = item.id.split(':')[1];
+            }
+            
+            if (malId) {
+                try {
+                    // Try mal_ prefixed file first, then jikan_
+                    const jikanRes = await axios.get(`${API_BASE}/cache/anime/mal_${malId}`).catch(() => axios.get(`${API_BASE}/cache/anime/jikan_${malId}`));
+                    const jikanEps = await axios.get(`${API_BASE}/cache/anime/mal_${malId}_episodes`).catch(() => axios.get(`${API_BASE}/cache/anime/jikan_${malId}_episodes`));
+                    
+                    // Jikan structures data inside a "data" object
+                    const mainData = jikanRes.data.data || jikanRes.data;
+                    const epData = jikanEps.data.data || jikanEps.data;
+                    
+                    data = {
+                        ...data,
+                        jikan: mainData,
+                        jikanEpisodes: Array.isArray(epData) ? epData : (epData?.data || [])
+                    };
+                } catch (e) { /* ignore fallback */ }
+            }
+        }
+        setSelectedCache(data);
     } catch (e) {
         setSelectedCache(null);
     }
@@ -66,34 +98,77 @@ const App = () => {
       
       // Gradually enhance
       mediaItems.forEach(async (item, index) => {
-          if (!item.poster_path) {
+          if (!item.poster_path || !item.rating) {
               try {
                   const cacheRes = await axios.get(`${API_BASE}/cache/${item.type}/${item.id}`);
                   const data = cacheRes.data;
                   let poster = null;
+                  let rating = null;
                   
                   if (item.type === 'anime' || item.type === 'manga') {
-                      poster = data.data?.Media?.coverImage?.extraLarge || data.data?.Media?.coverImage?.large;
+                      poster = data.data?.Media?.coverImage?.extraLarge || 
+                               data.data?.Media?.coverImage?.large || 
+                               data.images?.jpg?.large_image_url ||
+                               data.data?.images?.jpg?.large_image_url;
+                               
+                      if (data.data?.score) rating = data.data.score;
+                      else if (data.data?.Media?.averageScore) rating = data.data.Media.averageScore / 10;
+                      else if (data.score) rating = data.score;
                   } else if (item.type === 'tv') {
                       poster = data.image?.original || data.image?.medium;
+                      if (data.rating?.average) rating = data.rating.average;
+                  } else if (item.type === 'movie') {
+                      poster = data.poster_path ? `https://image.tmdb.org/t/p/w780${data.poster_path}` : null;
+                      if (data.vote_average) rating = data.vote_average;
                   } else if (item.type === 'book') {
                       if (data.covers && data.covers.length > 0 && data.covers[0] !== -1) {
                           poster = `https://covers.openlibrary.org/b/id/${data.covers[0]}-L.jpg`;
                       }
                   }
 
-                  if (poster) {
+                  if (poster || rating || data.episodes || (data._embedded?.episodes && data._embedded.episodes.length > 0)) {
                       setLibrary(prev => {
                           const nextIdx = prev.findIndex(it => it.id === item.id);
                           if (nextIdx === -1) return prev;
                           const next = [...prev];
-                          next[nextIdx] = { ...next[nextIdx], poster_path: poster };
-                          return next;
+                          const updatedItem = { ...next[nextIdx] };
+                          let changed = false;
+
+                          if (poster && !updatedItem.poster_path) { updatedItem.poster_path = poster; changed = true; }
+                          if (rating && !updatedItem.rating) { updatedItem.rating = rating; changed = true; }
+                          
+                          // Hydrate totals for TV/Anime
+                          if (item.type === 'anime' || item.type === 'tv') {
+                              // Jikan Anime
+                              const malEps = data.data?.episodes || data.episodes;
+                              if (item.type === 'anime' && malEps && !updatedItem.progress.total) {
+                                  updatedItem.progress.total = malEps;
+                                  changed = true;
+                              }
+                              // TVMaze Seasons/Episodes
+                              if (item.type === 'tv' && data._embedded?.episodes) {
+                                  const episodes = data._embedded.episodes;
+                                  const seasonsCount = [...new Set(episodes.map(e => e.season))].length;
+                                  if (!updatedItem.progress.total || updatedItem.progress.total === 0) {
+                                      updatedItem.progress.total = episodes.length;
+                                      changed = true;
+                                  }
+                                  if (!updatedItem.seasons || !updatedItem.seasons.total) {
+                                     updatedItem.seasons = { current: updatedItem.seasons?.current || 0, total: seasonsCount };
+                                     changed = true;
+                                  }
+                              }
+                          }
+
+                          if (changed) {
+                              next[nextIdx] = updatedItem;
+                              // Save back eventually or at least update local state
+                              return next;
+                          }
+                          return prev;
                       });
                   }
-              } catch (e) {
-                  // silent
-              }
+              } catch (e) { /* silent */ }
           }
       });
     } catch (err) {
@@ -106,6 +181,56 @@ const App = () => {
     setSelectedItem(null);
     setEditing(false);
     runSync(); // Silent Refresh on close
+  };
+
+  const handleDelete = async (id) => {
+    if (!window.confirm("Are you sure you want to delete this from your library AND cache?")) return;
+    try {
+        await axios.delete(`${API_BASE}/media/${id}`);
+        fetchLibrary(); // Refresh UI
+    } catch (err) {
+        alert("Failed to delete item: " + (err.response?.data?.error || err.message));
+    }
+  };
+
+  const handleBulkProgress = async (item, epNumber) => {
+    try {
+      const nextLibrary = library.map(it => {
+        if (it.id === item.id) {
+          return { ...it, progress: { ...it.progress, current: epNumber } };
+        }
+        return it;
+      });
+      setLibrary(nextLibrary);
+      await axios.post(`${API_BASE}/library`, { media: nextLibrary });
+    } catch (e) {
+      console.error('Bulk update failed');
+    }
+  };
+
+  const handleWebSearch = async (query) => {
+    if (!query) return;
+    setIsSearching(true);
+    try {
+      const res = await axios.get(`${API_BASE}/search/${activeTab}/${query}`);
+      setSearchResults(res.data);
+      setIsSearching(false);
+    } catch (e) {
+      setIsSearching(false);
+    }
+  };
+
+  const handleWebAdd = async (item) => {
+    try {
+      await axios.post(`${API_BASE}/add-to-library`, item);
+      await fetchLibrary(); // Refresh
+      setSearchResults([]); // Close
+      setSearch('');
+      // Background enrichment
+      axios.post(`${API_BASE}/sync`); 
+    } catch (e) {
+      console.error('Web add failed');
+    }
   };
 
   const getImageUrl = (item) => {
@@ -127,7 +252,9 @@ const App = () => {
     const matchesSearch = item?.title?.toLowerCase().includes((search || '').toLowerCase()) ||
                           item?.type?.toLowerCase().includes((search || '').toLowerCase());
     const matchesLocal = showLocalOnly ? item?.local?.available : true;
-    return matchesSearch && matchesLocal;
+    const matchesStatus = statusFilter === 'all' ? true : item?.status?.toLowerCase() === statusFilter.toLowerCase();
+    const matchesRating = minRatingFilter === 0 ? true : (item?.rating >= minRatingFilter);
+    return matchesSearch && matchesLocal && matchesStatus && matchesRating;
   });
 
   const handleSave = async (updatedItem) => {
@@ -170,15 +297,47 @@ const App = () => {
     return ia - ib;
   });
 
+  const handlePlayEp = async (epNum) => {
+    if (!selectedItem.local?.path) return;
+    try {
+        const res = await axios.get(`${API_BASE}/find-episode-file?dirPath=${encodeURIComponent(selectedItem.local.path)}&episodeNumber=${epNum}`);
+        if (res.data.filePath) {
+            await axios.post(`${API_BASE}/open-vlc`, { filePath: res.data.filePath });
+        }
+    } catch (e) {
+        alert("Episode file not found locally: " + (e.response?.data?.error || e.message));
+    }
+  };
+
   const getSeasons = () => {
-    if (!selectedItem || !selectedCache || selectedItem.type !== 'tv') return [];
+    if (!selectedItem || !selectedCache) return [];
+    if (selectedItem.type === 'anime' && selectedCache.jikanEpisodes) return [1];
+    if (selectedItem.type !== 'tv') return [];
     const episodes = selectedCache._embedded?.episodes || [];
     const seasons = [...new Set(episodes.map(ep => ep.season))];
     return seasons;
   };
 
   const getEpisodesBySeason = (season) => {
-    if (!selectedItem || !selectedCache || selectedItem.type !== 'tv') return null;
+    if (!selectedItem || !selectedCache) return null;
+    
+    // Jikan Anime Logic
+    if (selectedItem.type === 'anime') {
+        const eps = selectedCache.jikanEpisodes || [];
+        // If episodes are empty but we have a single item (like a movie)
+        if (eps.length === 0 && selectedItem.progress?.total <= 1) {
+            return [{
+                mal_id: 1,
+                title: selectedItem.title,
+                synopsis: selectedCache.jikan?.synopsis || selectedItem.overview,
+                aired: selectedItem.metadata?.release_date,
+                image: { original: getImageUrl(selectedItem) }
+            }];
+        }
+        return eps;
+    }
+
+    if (selectedItem.type !== 'tv') return null;
     return selectedCache._embedded?.episodes?.filter(ep => ep.season === season);
   };
 
@@ -201,11 +360,57 @@ const App = () => {
             <input 
               type="text" 
               className="search-bar" 
-              placeholder="Search library..." 
+              placeholder="Add or Search library..." 
               value={search}
               onChange={(e) => setSearch(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') handleWebSearch(search);
+              }}
+              style={{ paddingRight: '40px' }}
             />
           </div>
+          
+          <select 
+              className="search-bar" 
+              style={{ width: 'auto', padding: '0 15px', color: 'inherit', textAlign: 'center', cursor: 'pointer' }} 
+              value={activeTab} 
+              onChange={(e) => setActiveTab(e.target.value)}
+          >
+              <option value="movie">Movies</option>
+              <option value="tv">TV Shows</option>
+              <option value="anime">Anime</option>
+          </select>
+
+          <button className="icon-btn" onClick={() => handleWebSearch(search)}>
+            <Plus size={20} />
+          </button>
+
+          <select 
+            className="search-bar" 
+            style={{ width: 'auto', padding: '0 15px', color: 'inherit', textAlign: 'center', cursor: 'pointer' }} 
+            value={statusFilter} 
+            onChange={(e) => setStatusFilter(e.target.value)}
+          >
+            <option value="all">Any Status</option>
+            <option value="planned">Planned</option>
+            <option value="watching">Watching</option>
+            <option value="caught up">Caught Up</option>
+            <option value="completed">Completed</option>
+            <option value="dropped">Dropped</option>
+            <option value="paused">Paused</option>
+          </select>
+
+          <select 
+            className="search-bar" 
+            style={{ width: 'auto', padding: '0 15px', color: 'inherit', textAlign: 'center', cursor: 'pointer' }} 
+            value={minRatingFilter} 
+            onChange={(e) => setMinRatingFilter(Number(e.target.value))}
+          >
+            <option value={0}>Any Rating</option>
+            <option value={7}>7.0+ ⭐</option>
+            <option value={8}>8.0+ ⭐</option>
+            <option value={9}>9.0+ ⭐</option>
+          </select>
 
           <button 
              className="icon-btn" 
@@ -273,20 +478,27 @@ const App = () => {
                           <div style={{ position: 'absolute', top: 10, right: 10, zIndex: 11 }}>
                             <span className="type-badge">{item.status}</span>
                           </div>
-                          {item.local?.available && (
-                             <div className="play-overlay">
-                                 <button 
-                                     className="play-circle"
-                                     onClick={(e) => {
-                                         e.stopPropagation();
-                                         axios.post(`${API_BASE}/open-vlc`, { filePath: item.local.path });
-                                     }}
-                                     title="Play in VLC"
-                                 >
-                                     <Play fill="currentColor" size={24} style={{ marginLeft: '4px' }} />
-                                 </button>
-                             </div>
+                          {item.rating && (
+                            <div style={{ position: 'absolute', bottom: 10, right: 10, zIndex: 11 }}>
+                              <span style={{ background: 'rgba(0,0,0,0.8)', color: '#FFD700', padding: '4px 8px', borderRadius: '6px', fontSize: '13px', fontWeight: 'bold' }}>
+                                ⭐ {Number(item.rating).toFixed(1)}/10
+                              </span>
+                            </div>
                           )}
+                          <div className="play-overlay" style={{ gap: '15px' }}>
+                              {item.local?.available && (
+                                  <button 
+                                      className="play-circle"
+                                      onClick={(e) => {
+                                          e.stopPropagation();
+                                          axios.post(`${API_BASE}/open-vlc`, { filePath: item.local.path });
+                                      }}
+                                      title="Play in VLC"
+                                  >
+                                      <Play fill="currentColor" size={24} style={{ marginLeft: '4px' }} />
+                                  </button>
+                              )}
+                          </div>
                         </div>
                         <div className="card-content">
                           <h3 className="card-title">{item.title}</h3>
@@ -335,7 +547,7 @@ const App = () => {
                   </div>
                   {!editing ? (
                     <>
-                        <div className="modal-overview" dangerouslySetInnerHTML={{ __html: selectedItem.overview }}></div>
+                        <div className="modal-overview" dangerouslySetInnerHTML={{ __html: selectedCache?.jikan?.synopsis || selectedCache?.data?.Media?.description || selectedItem?.overview }}></div>
                         <div className="local-details">
                             <div className="local-row">
                                 <span className="label">Local Path</span>
@@ -375,19 +587,29 @@ const App = () => {
                     </div>
                   )}
                   
-                  <div style={{ marginTop: 30 }} className="button-group">
+                  <div style={{ marginTop: 30, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }} className="button-group">
                     {!editing ? (
                       <button className="btn btn-primary" onClick={() => setEditing(true)}>
                         <Edit3 size={18} style={{ marginRight: 8, display: 'inline' }} /> Edit Metadata
                       </button>
                     ) : (
                       <>
-                        <button className="btn btn-secondary" onClick={() => setEditing(false)}>Cancel</button>
-                        <button className="btn btn-primary" onClick={async () => {
-                            await handleSave(selectedItem);
-                            setEditing(false);
-                        }}>
-                          <Save size={18} style={{ marginRight: 8, display: 'inline' }} /> Save Changes
+                        <div style={{ display: 'flex', gap: '10px' }}>
+                          <button className="btn btn-secondary" onClick={() => setEditing(false)}>Cancel</button>
+                          <button className="btn btn-primary" onClick={async () => {
+                              await handleSave(selectedItem);
+                              setEditing(false);
+                          }}>
+                            <Save size={18} style={{ marginRight: 8, display: 'inline' }} /> Save Changes
+                          </button>
+                        </div>
+                        
+                        <button 
+                          className="btn" 
+                          style={{ backgroundColor: 'rgba(255, 82, 82, 0.1)', color: '#ff5252', border: '1px solid rgba(255, 82, 82, 0.3)' }}
+                          onClick={() => handleDelete(selectedItem.id)}
+                        >
+                          <Trash2 size={18} style={{ marginRight: 8, display: 'inline' }} /> Delete Item
                         </button>
                       </>
                     )}
@@ -397,10 +619,21 @@ const App = () => {
 
               {editing && (
                 <div className="edit-form" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px', marginBottom: 40, borderTop: '1px solid var(--glass-border)', paddingTop: 30 }}>
-                   <div className="form-group">
-                    <label className="form-label">Status</label>
-                    <input className="form-input" value={selectedItem.status} onChange={(e) => setSelectedItem({...selectedItem, status: e.target.value})} />
-                  </div>
+                    <div className="form-group">
+                      <label className="form-label">Status</label>
+                      <select 
+                        className="form-input" 
+                        value={selectedItem.status} 
+                        onChange={(e) => setSelectedItem({...selectedItem, status: e.target.value})}
+                      >
+                        <option value="planned">Planned</option>
+                        <option value="watching">Watching</option>
+                        <option value="caught up">Caught Up</option>
+                        <option value="completed">Completed</option>
+                        <option value="dropped">Dropped</option>
+                        <option value="paused">Paused</option>
+                      </select>
+                    </div>
                   <div className="form-group">
                     <label className="form-label">Progress (Current)</label>
                     <input type="number" className="form-input" value={selectedItem.progress.current} onChange={(e) => setSelectedItem({...selectedItem, progress: {...selectedItem.progress, current: parseInt(e.target.value)}})} />
@@ -445,15 +678,42 @@ const App = () => {
                   
                   <div className="episode-grid">
                     {currentEpisodes?.map(ep => (
-                      <div key={ep.id} className="episode-card">
+                      <div key={ep.id || ep.mal_id} className="episode-card">
                         <div className="ep-card-image">
-                           <img src={ep.image?.medium || ep.image?.original} alt={ep.name} />
-                           <span className="ep-tag">S{ep.season} E{ep.number}</span>
+                           <img src={ep.image?.medium || ep.image?.original || getImageUrl(selectedItem)} alt={ep.name || ep.title} />
+                           {selectedItem?.local?.available && (
+                               <div className="play-overlay" onClick={() => handlePlayEp(ep.number || ep.mal_id)}>
+                                   <div className="play-circle" style={{ width: 40, height: 40 }}>
+                                       <Play size={18} fill="currentColor" />
+                                   </div>
+                               </div>
+                           )}
+                           {ep.season ? (
+                               <span className="ep-tag">S{ep.season} E{ep.number}</span>
+                           ) : (
+                               <span className="ep-tag">Ep {ep.mal_id || ep.number}</span>
+                           )}
                         </div>
                         <div className="ep-card-body">
-                          <h4>{ep.name}</h4>
-                          <span className="ep-date">{ep.airdate}</span>
-                          <div className="ep-desc" dangerouslySetInnerHTML={{ __html: ep.summary }}></div>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                            <h4 style={{ flex: 1 }}>{ep.name || ep.title || `Episode ${ep.number}`}</h4>
+                            {(ep.rating?.average || ep.score) && (
+                              <span style={{ fontSize: '12px', fontWeight: 'bold', color: '#FFD700', marginLeft: '8px', whiteSpace: 'nowrap' }}>
+                                ⭐ {Number((ep.rating?.average || (ep.score * 2))).toFixed(1)}/10
+                              </span>
+                            )}
+                          </div>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                            <span className="ep-date">{ep.airdate || (ep.aired ? ep.aired.split('T')[0] : '')}</span>
+                            <button 
+                                className="btn-secondary" 
+                                style={{ padding: '4px 10px', fontSize: '12px' }}
+                                onClick={() => handleBulkProgress(selectedItem, ep.number || ep.mal_id)}
+                            >
+                                Mark Watched
+                            </button>
+                          </div>
+                          <div className="ep-desc" dangerouslySetInnerHTML={{ __html: ep.summary || ep.synopsis || '' }}></div>
                         </div>
                       </div>
                     ))}
@@ -462,6 +722,55 @@ const App = () => {
               )}
             </motion.div>
           </div>
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {searchResults.length > 0 && (
+            <div className="modal-overlay" onClick={() => setSearchResults([])}>
+                <motion.div 
+                    className="modal-content" 
+                    initial={{ scale: 0.9, opacity: 0 }}
+                    animate={{ scale: 1, opacity: 1 }}
+                    exit={{ scale: 0.9, opacity: 0 }}
+                    onClick={e => e.stopPropagation()}
+                >
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 25 }}>
+                         <h2 className="section-title" style={{ marginBottom: 0 }}>Add New Media</h2>
+                         <button className="close-btn" onClick={() => setSearchResults([])}><X size={24} /></button>
+                    </div>
+                    <div className="media-grid">
+                        {searchResults.map(res => (
+                            <div key={res.id} className="media-card" onClick={() => handleWebAdd(res)}>
+                                <div className="card-image-container">
+                                    <img 
+                                        src={res.poster_path || 'https://via.placeholder.com/300x450?text=No+Poster'} 
+                                        className="card-image" 
+                                        alt={res.title}
+                                    />
+                                    <div className="play-overlay">
+                                        <Plus className="play-circle" size={30} />
+                                    </div>
+                                    {res.vote_average && (
+                                        <div style={{ position: 'absolute', bottom: 10, right: 10, zIndex: 11 }}>
+                                          <span style={{ background: 'rgba(0,0,0,0.8)', color: '#FFD700', padding: '4px 8px', borderRadius: '6px', fontSize: '13px', fontWeight: 'bold' }}>
+                                            ⭐ {Number(res.vote_average).toFixed(1)}
+                                          </span>
+                                        </div>
+                                    )}
+                                </div>
+                                <div className="card-content">
+                                    <div className="card-title">{res.title}</div>
+                                    <div className="card-meta">
+                                        <span className="type-badge">{res.type}</span>
+                                        <span>{res.year}</span>
+                                    </div>
+                                </div>
+                            </div>
+                        ))}
+                    </div>
+                </motion.div>
+            </div>
         )}
       </AnimatePresence>
     </div>

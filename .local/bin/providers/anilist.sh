@@ -1,4 +1,4 @@
-#!usr/bin/env bash
+#!/usr/bin/env bash
 # anilist_add "<query>" "<type>" "<subtype>"
 
 # Escape a string safely for JSON
@@ -21,82 +21,43 @@ anilist_add() {
     # GraphQL query
     read -r -d '' graphql_query <<EOF
 {
-  "query": "query (\$search: String) { Media(search: \$search, type: $anilist_type) { id title { romaji english native } format status episodes chapters volumes startDate { year } genres description } }",
+  "query": "query (\$search: String) { Media(search: \$search, type: $anilist_type) { id title { romaji english native } format status episodes chapters volumes startDate { year month day } genres description } }",
   "variables": { "search": "$query" }
 }
 EOF
 
-    # Fetch JSON from Anilist API
-    local json media
-    json=$(curl -s -X POST -H "Content-Type: application/json" -d "$graphql_query" https://graphql.anilist.co)
-    media=$(echo "$json" | jq -r '.data.Media // empty')
-
-    if [ -z "$media" ] || [ "$media" = "null" ]; then
-        echo '{}'
-        return 1
-    fi
-
-    # Extract fields
-    local id title status format episodes chapters volumes year month day genres description release_date
-    id=$(echo "$media" | jq -r '.id')
-    title=$(echo "$media" | jq -r '.title.english // .title.romaji // .title.native // empty' | jq -R .)
-    status=$(echo "$media" | jq -r '.status // "planned"' | jq -R .)
-    format=$(echo "$media" | jq -r '.format // empty' | jq -R .)
-    episodes=$(echo "$media" | jq -r '.episodes // 1')
-    chapters=$(echo "$media" | jq -r '.chapters // 1')
-    volumes=$(echo "$media" | jq -r '.volumes // 1')
-    
-    year=$(echo "$media" | jq -r '.startDate.year // empty')
-    month=$(echo "$media" | jq -r '.startDate.month // empty')
-    day=$(echo "$media" | jq -r '.startDate.day // empty')
-    
-    # Format release_date YYYY-MM-DD
-    if [ -n "$year" ]; then
-        release_date="$year"
-        [ -n "$month" ] && release_date="${release_date}-$(printf "%02d" "$month")"
-        [ -n "$day" ] && release_date="${release_date}-$(printf "%02d" "$day")"
-    fi
-
-    genres=$(echo "$media" | jq -c '.genres // []')
-    description=$(echo "$media" | jq -r '.description // ""' | jq -R .)
-
-    # Determine progress & unit
-    local progress_total seasons_total unit
-    if [ "$type" = "anime" ]; then
-        progress_total=$episodes
-        seasons_total=null
-        unit="episode"
-    else
-        progress_total=$chapters
-        seasons_total=$volumes
-        unit="chapter"
-    fi
-    
-    jq -n \
-        --arg id "anilist:$id" \
-        --arg title "$title" \
-        --arg type "$type" \
-        --arg subtype "$subtype" \
-        --arg status "$status" \
-        --arg unit "$unit" \
-        --arg release_date "$release_date" \
-        --argjson total "$progress_total" \
-        --argjson seasons_total "$seasons_total" \
-        --argjson year "${year:-null}" \
-        --argjson genres "$genres" \
-        --arg description "$description" \
-        '{
-          id: $id,
-          title: $title,
+    # Fetch and map JSON in a single step for robustness
+    curl -s -X POST -H "Content-Type: application/json" -d "$graphql_query" https://graphql.anilist.co | jq -c --arg type "$type" --arg subtype "$subtype" '
+        .data.Media | . as $media |
+        {
+          id: "anilist:\(.id)",
+          title: (.title.english // .title.romaji // .title.native // "Unknown"),
           type: $type,
           subtype: $subtype,
-          status: $status,
-          progress: {current: 0, total: $total, unit: $unit},
-          seasons: {current: 0, total: $seasons_total},
-          metadata: {year: $year, release_date: $release_date, genres: $genres},
-          source: {provider: "anilist", id: ($id | split(":")[1])},
+          status: (.status | ascii_downcase // "planned"),
+          progress: {
+            current: 0,
+            total: (if $type == "anime" then .episodes else .chapters end // 1),
+            unit: (if $type == "anime" then "episode" else "chapter" end)
+          },
+          seasons: {
+            current: 0,
+            total: (if $type == "anime" then null else .volumes end)
+          },
+          metadata: {
+            year: .startDate.year,
+            release_date: (if .startDate.year then
+              "\(.startDate.year)-\(if .startDate.month then (.startDate.month | tostring | lpad(2; "0")) else "01" end)-\(if .startDate.day then (.startDate.day | tostring | lpad(2; "0")) else "01" end)"
+            else null end),
+            genres: (.genres // [])
+          },
+          source: {
+            provider: "anilist",
+            id: (.id | tostring)
+          },
           local: {path: "", available: false},
-          timestamps: {added: now | todateiso8601, updated: now | todateiso8601},
-          overview: $description
-        }'
+          timestamps: {added: (now | strftime("%Y-%m-%dT%H:%M:%SZ")), updated: (now | strftime("%Y-%m-%dT%H:%M:%SZ"))},
+          overview: (.description | gsub("<[^>]*>"; "") // "")
+        }
+    '
 }

@@ -6,6 +6,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import { spawn } from 'child_process';
 import { EventEmitter } from 'events';
+import axios from 'axios';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -14,11 +15,20 @@ const app = express();
 const PORT = 3001;
 const bus = new EventEmitter();
 
-// Paths
+// Load TMDB Token from .env manually
+let TMDB_TOKEN = '';
+const ENV_PATH = path.join(process.env.HOME, '.config/mt/.env');
+if (fs.existsSync(ENV_PATH)) {
+    const envContent = fs.readFileSync(ENV_PATH, 'utf8');
+    const match = envContent.match(/TMDB_TOKEN=["']?([^"'\n]+)["']?/);
+    if (match) TMDB_TOKEN = match[1];
+}
+
 // Paths - Prefer DATA_DIR environment variable
 const DATA_DIR = process.env.DATA_DIR || path.join(process.env.HOME, 'Documents/Personal/Tracker');
 const LIBRARY_FILE = path.join(DATA_DIR, 'library.json');
 const CACHE_DIR = path.join(DATA_DIR, 'cache');
+const PENDING_FILE = path.join(CACHE_DIR, 'pending.json');
 
 // Prefer the workspace-local .local/bin if it exists
 const LOCAL_BIN = path.join(DATA_DIR, '.local/bin');
@@ -27,6 +37,12 @@ const BIN_DIR = fs.existsSync(LOCAL_BIN) ? LOCAL_BIN : HOME_BIN;
 
 app.use(cors());
 app.use(bodyParser.json());
+
+// Serve static files from the React frontend build
+const DIST_PATH = path.join(__dirname, 'dist');
+if (fs.existsSync(DIST_PATH)) {
+    app.use(express.static(DIST_PATH));
+}
 
 let activeProcess = null;
 
@@ -40,6 +56,160 @@ const escapeShell = (arg) => {
     }
     return `'${arg.replace(/'/g, "'\\''")}'`;
 };
+
+app.get('/api/find-episode-file', async (req, res) => {
+    const { dirPath, episodeNumber } = req.query;
+    if (!dirPath || !fs.existsSync(dirPath)) {
+        return res.status(404).json({ error: 'Directory not found' });
+    }
+
+    try {
+        const files = await fs.readdir(dirPath);
+        const epNum = parseInt(episodeNumber);
+        
+        // Patterns to match: E05, S01E05, [05], - 05, _05
+        const patterns = [
+            new RegExp(`[Ee]${String(epNum).padStart(2, '0')}[^0-9]`),
+            new RegExp(`[Ee]${epNum}[^0-9]`),
+            new RegExp(`\\[${String(epNum).padStart(2, '0')}\\]`),
+            new RegExp(`\\D${String(epNum).padStart(2, '0')}\\D`),
+            new RegExp(`\\D${epNum}\\D`)
+        ];
+
+        const match = files.find(file => {
+            const isVideo = /\.(mkv|mp4|avi|mov|m4v)$/i.test(file);
+            if (!isVideo) return false;
+            return patterns.some(p => p.test(file));
+        });
+
+        if (match) {
+            res.json({ filePath: path.join(dirPath, match) });
+        } else {
+            res.status(404).json({ error: 'Episode file not found' });
+        }
+    } catch (err) {
+        res.status(500).json({ error: 'Search failed' });
+    }
+});
+
+// Search Proxy API
+app.get('/api/search/:type/:query', async (req, res) => {
+    const { type, query } = req.params;
+    const q = encodeURIComponent(query);
+    
+    try {
+        let results = [];
+        if (type === 'movie') {
+            const tmdbRes = await axios.get(`https://api.themoviedb.org/3/search/movie?query=${q}`, {
+                headers: { Authorization: `Bearer ${TMDB_TOKEN}` }
+            });
+            results = tmdbRes.data.results.map(r => ({
+                id: r.id,
+                title: r.title,
+                type: 'movie',
+                year: r.release_date?.split('-')[0],
+                poster_path: r.poster_path ? `https://image.tmdb.org/t/p/w780${r.poster_path}` : null,
+                overview: r.overview,
+                vote_average: r.vote_average,
+                episodes: 1,
+                source: { provider: 'tmdb', id: r.id.toString() }
+            }));
+        } else if (type === 'tv') {
+            const tvRes = await axios.get(`https://api.tvmaze.com/search/shows?q=${q}`);
+            results = tvRes.data.map(r => ({
+                id: r.show.id,
+                title: r.show.name,
+                type: 'tv',
+                year: r.show.premiered?.split('-')[0],
+                poster_path: r.show.image?.original || r.show.image?.medium,
+                overview: r.show.summary?.replace(/<[^>]*>?/gm, ''),
+                vote_average: r.show.rating?.average,
+                episodes: 0, // TVMaze doesn't include total in search; mt-info will fetch this
+                source: { provider: 'tvmaze', id: r.show.id.toString() }
+            }));
+        } else if (type === 'anime') {
+            const aniRes = await axios.get(`https://api.jikan.moe/v4/anime?q=${q}`);
+            results = aniRes.data.data.map(r => ({
+                id: r.mal_id,
+                title: r.title_english || r.title,
+                type: 'anime',
+                year: r.aired?.from?.split('-')[0],
+                poster_path: r.images?.jpg?.large_image_url,
+                overview: r.synopsis,
+                vote_average: r.score,
+                episodes: r.episodes || 0,
+                source: { provider: 'mal', id: r.mal_id.toString() }
+            }));
+        }
+        res.json(results);
+    } catch (err) {
+        console.error('Search failed:', err.message);
+        res.status(500).json({ error: 'Search failed' });
+    }
+});
+
+app.post('/api/add-to-library', async (req, res) => {
+    try {
+        const item = req.body;
+        const data = await fs.readJson(LIBRARY_FILE);
+        
+        let totalEpisodes = parseInt(item.episodes) || 0;
+        let totalSeasonsCount = 1;
+        
+        // Deep Hydration: If counts are missing, fetch them before writing
+        if (item.type === 'tv' && item.source.id) {
+            try {
+                const fullRes = await axios.get(`https://api.tvmaze.com/shows/${item.source.id}?embed=episodes`);
+                const episodes = fullRes.data._embedded?.episodes || [];
+                totalEpisodes = episodes.length;
+                totalSeasonsCount = [...new Set(episodes.map(e => e.season))].length;
+            } catch (e) { /* fallback to user data */ }
+        } else if (item.type === 'anime' && !totalEpisodes) {
+            try {
+                const aniRes = await axios.get(`https://api.jikan.moe/v4/anime/${item.source.id}`);
+                totalEpisodes = aniRes.data.data?.episodes || 0;
+            } catch (e) { /* fallback */ }
+        }
+
+        const now = new Date().toISOString();
+        const newItem = {
+            id: `${item.source.provider}:${item.source.id}`,
+            title: item.title,
+            type: item.type,
+            subtype: item.type === 'tv' ? 'series' : (item.type === 'movie' ? null : null),
+            status: "planned",
+            progress: { 
+                current: 0, 
+                total: totalEpisodes || (item.type === 'movie' ? 1 : 0), 
+                unit: item.type === 'movie' ? "scene" : (item.type === 'book' ? "page" : "episode") 
+            },
+            seasons: (item.type === 'tv' || item.type === 'anime') ? { current: 1, total: totalSeasonsCount } : null,
+            metadata: { 
+                year: parseInt(item.year) || null,
+                release_date: item.release_date || null,
+                genres: []
+            },
+            source: item.source,
+            local: { path: "", available: false },
+            timestamps: { added: now, updated: now },
+            poster_path: item.poster_path, 
+            vote_average: item.vote_average,
+            overview: item.overview,
+            original_title: item.title,
+            original_language: "en",
+            popularity: 0
+        };
+        
+        // Prevent duplicates
+        if (!data.media.some(m => m.id === newItem.id)) {
+            data.media.push(newItem);
+            await fs.writeJson(LIBRARY_FILE, data, { spaces: 2 });
+        }
+        res.json({ success: true });
+    } catch (err) {
+        res.status(500).json({ error: 'Failed to add item' });
+    }
+});
 
 // API Endpoints
 app.get('/api/library', async (req, res) => {
@@ -134,6 +304,15 @@ app.post('/api/open-mt-add', (req, res) => {
     res.json({ success: true });
 });
 
+
+// Delete media via mt-remove script
+app.delete('/api/media/:id', (req, res) => {
+    const { id } = req.params;
+    const cmd = `~/.local/bin/mt-remove --id ${escapeShell(id)}`;
+    console.log(`Executing: ${cmd}`);
+    spawn(cmd, { shell: '/bin/bash' });
+    res.json({ success: true });
+});
 
 app.post('/api/sync', (req, res) => {
     if (activeProcess) {

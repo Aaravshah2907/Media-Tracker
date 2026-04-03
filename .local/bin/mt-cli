@@ -80,7 +80,7 @@ options=(
     "mt-info (Sync metadata & cache)"
     "mt-change (Change Metadata library)"
     "mt-update (Update progress)"
-    "mt-remove (Clean cache)"
+    "mt-remove (Delete Item & Cache)"
 )
 
 while true; do

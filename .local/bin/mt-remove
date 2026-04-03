@@ -1,23 +1,77 @@
 #!/usr/bin/env bash
+# mt-remove: Remove media from library and clean associated cache
 
 set -euo pipefail
 
 DATA_DIR="${DATA_DIR:-$HOME/Documents/Personal/Tracker}"
 LIB="$DATA_DIR/library.json"
+CACHE_DIR="$DATA_DIR/cache"
 
-selection=$(jq -r '
-.media[]
-| "\(.title) | ID:\(.id)"
-' "$LIB" | fzf)
+# --- Parse Arguments ---
+target_id=""
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -h|--help)
+        echo "Usage: mt-remove [OPTIONS]"
+        echo "Interactive media removal and cache cleanup tool."
+        echo ""
+        echo "Options:"
+        echo "  -h, --help    Show this help message"
+        echo "  --id <id>     Remove a specific item by ID (non-interactive)"
+        echo ""
+        echo "Example (non-interactive):"
+        echo "  mt-remove --id anilist:123456"
+        exit 0
+        ;;
+    --id) target_id="$2"; shift 2 ;;
+    *) shift ;;
+  esac
+done
 
-[ -z "$selection" ] && exit 1
+if [ -n "$target_id" ]; then
+    id="$target_id"
+    item_json=$(jq --arg id "$id" '.media[] | select(.id == $id)' "$LIB")
+    if [ -z "$item_json" ] || [ "$item_json" == "null" ]; then
+        echo "Item ID $id not found." >&2
+        exit 1
+    fi
+else
+    # --- Select Item ---
+    selection=$(jq -r '
+    .media[]
+    | "\(.title) | ID:\(.id)"
+    ' "$LIB" | fzf --prompt="Select item to remove: ")
 
-id=$(echo "$selection" | sed -E 's/.*ID:(.*)/\1/')
+    [ -z "$selection" ] && exit 1
 
-updated=$(jq --arg id "$id" '
-.media |= map(select(.id != $id))
-' "$LIB")
+    # --- Extract info ---
+    id=$(echo "$selection" | sed -E 's/.*ID:(.*)/\1/')
+    item_json=$(jq --arg id "$id" '.media[] | select(.id == $id)' "$LIB")
+fi
 
+type=$(echo "$item_json" | jq -r '.type')
+source_id=$(echo "$item_json" | jq -r '.source.id')
+
+# --- Remove from Library ---
+updated=$(jq --arg id "$id" '.media |= map(select(.id != $id))' "$LIB")
 echo "$updated" > "$LIB"
 
-echo "Removed"
+# --- Cleanup Cache Files ---
+case "$type" in
+    anime|manga) 
+        file_to_remove="$CACHE_DIR/$type/anilist_${source_id}.json"
+        if [ "$type" = "anime" ]; then
+            # Also clean Jikan files
+            anilist_data=$(cat "$file_to_remove" 2>/dev/null || echo "{}")
+            mal_id=$(echo "$anilist_data" | jq -r '.data.Media.idMal // empty')
+            [ -n "$mal_id" ] && [ "$mal_id" != "null" ] && rm -f "$CACHE_DIR/anime/jikan_${mal_id}.json" "$CACHE_DIR/anime/jikan_${mal_id}_episodes.json"
+        fi
+        ;;
+    tv)          file_to_remove="$CACHE_DIR/tv/tvmaze_${source_id}.json" ;;
+    movie)       file_to_remove="$CACHE_DIR/movie/tmdb_${source_id}.json" ;;
+    book)        file_to_remove="$CACHE_DIR/book/openlibrary_${id//[:\/]/_}.json" ;;
+esac
+
+[ -f "$file_to_remove" ] && rm -f "$file_to_remove"
+
+echo "Removed $(echo "$item_json" | jq -r '.title') and its associated cache files."
