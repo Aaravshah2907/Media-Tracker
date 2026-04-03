@@ -33,10 +33,10 @@ jq -r "
 $( [ -n "$TYPE" ] && echo "| select(.type == \"$TYPE\")" )
 $( [ -n "$STATUS" ] && echo "| select(.status == \"$STATUS\")" )
 | if .type == \"book\" then
-    \"\(.title) by \(.metadata.author // \"Unknown\") [\(.type)] (\(.status))
+    \"[\(.id)] \(.title) by \(.metadata.author // \"Unknown\") [\(.type)] (\(.status))
      → \(.progress.current)/\(.progress.total) \(.progress.unit)\"
   else
-    \"\(.title) [\(.type)] (\(.status))
+    \"[\(.id)] \(.title) [\(.type)] (\(.status))
      → \(.progress.current)/\(.progress.total) \(.progress.unit)\"
   end
 " "$LIB"

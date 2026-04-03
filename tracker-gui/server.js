@@ -121,7 +121,7 @@ app.get('/api/search/:type/:query', async (req, res) => {
         } else if (type === 'book') {
             const obRes = await axios.get(`https://openlibrary.org/search.json?q=${q}&limit=20`);
             results = obRes.data.docs.filter(r => r.key).map(r => ({
-                id: r.key.replace('/works/', ''),
+                id: r.key,
                 title: r.title,
                 type: 'book',
                 year: r.first_publish_year?.toString() || '',
@@ -129,7 +129,7 @@ app.get('/api/search/:type/:query', async (req, res) => {
                 overview: r.first_sentence ? (typeof r.first_sentence === 'string' ? r.first_sentence : r.first_sentence[0]) : '',
                 vote_average: r.ratings_average || 0,
                 episodes: r.number_of_pages_median || 0,
-                source: { provider: 'openlibrary', id: r.key.replace('/works/', '') }
+                source: { provider: 'openlibrary', id: r.key }
             }));
         }
         res.json(results);
@@ -172,7 +172,7 @@ app.post('/api/add-to-library', async (req, res) => {
             progress: { 
                 current: 0, 
                 total: totalEpisodes || (item.type === 'movie' ? 1 : null), 
-                unit: item.type === 'movie' ? "scene" : (item.type === 'book' ? "page" : "episode") 
+                unit: item.type === 'movie' ? "movie" : (item.type === 'book' ? "page" : "episode") 
             },
             seasons: (item.type === 'tv' || item.type === 'anime') ? { current: 1, total: totalSeasonsCount } : { current: 0, total: null },
             metadata: { 
@@ -183,7 +183,7 @@ app.post('/api/add-to-library', async (req, res) => {
                 series: item.series || "",
                 isbn: item.isbn || []
             },
-            source: { provider: item.source.provider, id: `${item.source.provider}:${item.source.id}` },
+            source: { provider: item.source.provider, id: item.source.id },
             local: { path: "", available: false },
             timestamps: { added: now, updated: now },
             poster_path: item.poster_path, 

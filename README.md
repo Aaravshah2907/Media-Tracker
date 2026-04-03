@@ -141,6 +141,16 @@ This project is constantly evolving, and we are looking for open-source contribu
 4. **Calendar & Notifications**: A visual calendar view plotting out exact air dates for tracking ongoing anime and TV shows without leaving the app.
 5. **Automated Metadata Refresh**: Implementing a lightweight Cron-Job that runs `mt-info` daily in the background to automatically update ongoing episode counts.
 6. **Cloud Export Engine**: A simple hook to backup your `library.json` or export your list back to official services (MAL, AniList, Trakt) to prevent data loss.
+7. **Custom Categorization & Filtering**: Implementing advanced filtering based on:
+    - **Production Media**: Filter your library by platform/studio (e.g., Paramount+, Netflix, Amazon Prime Video, Disney+).
+    - **User Tags & Collections**: Create custom groupings for franchises and universes like **MCU**, **Harry Potter (HP)**, **DCEU**, or **Star Wars**.
+8. **VLC Real-Time Sync**: Implementing a background bridge to communicate with VLC's media states, automatically incrementing your progress in `library.json` once an episode is fully viewed.
+9. **Dynamic Theme Engine**: Implementing adaptive UI colors that shift based on the dominant palette of the media poster currently in view (utilizing `colorthief`).
+10. **Cinematic Trailer Hub**: A built-in YouTube API integration to watch trailers directly within the media detail modals.
+11. **"What's Next?" Recommendations**: Localized intelligence to suggest media from your "Planned" list based on your genre preferences and high-rated items.
+12. **Global Command Palette (CMD+K)**: A high-performance search overlay to navigate the library, search for new media, or trigger CLI commands from any screen.
+13. **Media-Proxy Browser Extension**: A browser-level integration to "Add to Tracker" directly while browsing Netflix, Disney+, or MyAnimeList.
+14. **Automated E-Book Syncing**: Expanding progress tracking to e-readers (Calibre/Kindle) to automatically update page counts in `library.json`.
 
 If you are interested in building these out, please open an Issue or check the Contributing section!
 

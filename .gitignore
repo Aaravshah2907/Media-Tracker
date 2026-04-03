@@ -1,5 +1,6 @@
 # Media Data
 library.json
+library.bk.json
 cache/
 backups/
 format.json

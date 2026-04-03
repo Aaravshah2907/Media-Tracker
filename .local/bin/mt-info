@@ -112,18 +112,30 @@ fetch_book() {
 
 fetch_jikan() {
     local mal_id="$1"
-    local file="$CACHE_DIR/anime/mal_${mal_id}.json"
+    local type="${2:-anime}"
+    local file="$CACHE_DIR/$type/mal_${mal_id}.json"
+    
+    # Episodes only apply to anime
     local ep_file="$CACHE_DIR/anime/mal_${mal_id}_episodes.json"
 
-    [[ -f "$file" ]] && [[ -f "$ep_file" ]] && { echo "Jikan cache exists for MAL ID $mal_id, skipping."; return; }
+    if [[ -f "$file" ]]; then
+        if [ "$type" = "manga" ] || [[ -f "$ep_file" ]]; then
+            echo "Jikan cache exists for MAL $type ID $mal_id, skipping."
+            return
+        fi
+    fi
 
-    echo "Fetching Jikan (MAL) enrichment for ID $mal_id..."
+    echo "Fetching Jikan (MAL) $type enrichment for ID $mal_id..."
     curl -s -L -A "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36" \
-        "https://api.jikan.moe/v4/anime/${mal_id}/full" | jq . > "$file"
+        "https://api.jikan.moe/v4/${type}/${mal_id}/full" | jq . > "$file"
+    
     sleep 1 # Respect Jikan rate limits
-    curl -s -L -A "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36" \
-        "https://api.jikan.moe/v4/anime/${mal_id}/episodes" | jq . > "$ep_file"
-    sleep 1
+    
+    if [ "$type" = "anime" ]; then
+        curl -s -L -A "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36" \
+            "https://api.jikan.moe/v4/anime/${mal_id}/episodes" | jq . > "$ep_file"
+        sleep 1
+    fi
 }
 
 # -------------------------
@@ -178,7 +190,7 @@ jq -c '.[]' "$PENDING" | while read -r item; do
     case "$type" in
         anime|manga)
             if [ "$provider" = "mal" ]; then
-                fetch_jikan "$id"
+                fetch_jikan "$id" "$type"
             else
                 fetch_anilist "$id" "$type"
                 if [ "$type" = "anime" ]; then
