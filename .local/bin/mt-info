@@ -144,8 +144,24 @@ fetch_jikan() {
     sleep 1 # Respect Jikan rate limits
     
     if [ "$type" = "anime" ]; then
-        curl -s -L -A "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36" \
-            "https://api.jikan.moe/v4/anime/${mal_id}/episodes" | jq . > "$ep_file"
+        echo "Fetching Jikan episodes (Page 1)..."
+        local initial_ep=$(curl -s -L -A "Mozilla/5.0" "https://api.jikan.moe/v4/anime/${mal_id}/episodes")
+        echo "$initial_ep" | jq . > "$ep_file"
+        
+        local has_next=$(echo "$initial_ep" | jq -r '.pagination.has_next_page // false')
+        local current_page=1
+        
+        while [ "$has_next" = "true" ] && [ $current_page -lt 15 ]; do
+            current_page=$((current_page + 1))
+            sleep 1 # Stricter rate limit for paginated calls
+            echo "Fetching Jikan episodes (Page $current_page)..."
+            local next_ep=$(curl -s -L -A "Mozilla/5.0" "https://api.jikan.moe/v4/anime/${mal_id}/episodes?page=$current_page")
+            
+            # Merge the "data" arrays
+            jq --argjson next "$next_ep" '.data += $next.data' "$ep_file" > "${ep_file}.tmp" && mv "${ep_file}.tmp" "$ep_file"
+            
+            has_next=$(echo "$next_ep" | jq -r '.pagination.has_next_page // false')
+        done
         sleep 1
     fi
 }

@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import axios from 'axios';
-import { Search, Loader2, Edit3, X, Save, ExternalLink, RefreshCw, Send, ZapOff, CheckCircle, Folder, Play, Download, PlusCircle, Trash2, Plus, Filter } from 'lucide-react';
+import { Search, Loader2, Edit3, X, Save, ExternalLink, RefreshCw, Send, ZapOff, CheckCircle, Folder, Play, Download, PlusCircle, Trash2, Plus, Filter, Link as LinkIcon } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 
 const API_BASE = 'http://localhost:3001/api';
@@ -19,6 +19,7 @@ const App = () => {
   const [showLocalOnly, setShowLocalOnly] = useState(false);
   const [statusFilter, setStatusFilter] = useState('all');
   const [minRatingFilter, setMinRatingFilter] = useState(0);
+  const [brandFilter, setBrandFilter] = useState('all');
   const [syncing, setSyncing] = useState(false);
   const [syncingProgress, setSyncingProgress] = useState(false);
 
@@ -98,11 +99,10 @@ const App = () => {
   useEffect(() => {
     if (selectedItem) {
       fetchCacheOnSelect(selectedItem);
-      setSelectedSeason(1);
     } else {
       setSelectedCache(null);
     }
-  }, [selectedItem]);
+  }, [selectedItem?.id]); // Only reset/fetch when the MEDIA ID changes, not on every data update
 
   const fetchLibrary = async () => {
     try {
@@ -200,9 +200,17 @@ const App = () => {
     }
     try {
       const res = await axios.get(`${API_BASE}/media/${minimalItem.id}`);
-      setSelectedItem(res.data);
+      const fullItem = res.data;
+      setSelectedItem(fullItem);
+      // Smart season selection: Show the season they are currently watching
+      if (fullItem.seasons?.current) {
+        setSelectedSeason(fullItem.seasons.current);
+      }
     } catch (e) {
       setSelectedItem(minimalItem);
+      if (minimalItem.seasons?.current) {
+        setSelectedSeason(minimalItem.seasons.current);
+      }
     }
   };
 
@@ -232,8 +240,59 @@ const App = () => {
       });
       setLibrary(nextLibrary);
       await axios.post(`${API_BASE}/library`, { media: nextLibrary });
+      
+      // Also mark this specific episode as watched in the sidecar
+      await handleToggleEpisodeWatched(item.id, epNumber, selectedSeason, true);
     } catch (e) {
       console.error('Bulk update failed');
+    }
+  };
+
+  const handleToggleEpisodeWatched = async (mediaId, number, season, watched) => {
+    try {
+      const res = await axios.post(`${API_BASE}/media/${mediaId}/batch-episodes`, {
+        episodes: [{ number, season, watched }]
+      });
+      if (selectedItem && selectedItem.id === mediaId) {
+        setSelectedItem({ ...selectedItem, userEpisodes: res.data.userEpisodes, progress: res.data.progress });
+      }
+      fetchLibrary();
+    } catch (e) {
+      console.error('Toggle episode watched failed');
+    }
+  };
+
+  const handleToggleSeasonWatched = async (mediaId, seasonEpisodes, isWatched) => {
+    try {
+      const episodes = seasonEpisodes.map(ep => ({
+        number: ep.number || ep.mal_id,
+        season: ep.season || selectedSeason,
+        watched: isWatched
+      }));
+      
+      const res = await axios.post(`${API_BASE}/media/${mediaId}/batch-episodes`, { episodes });
+      if (selectedItem && selectedItem.id === mediaId) {
+        setSelectedItem({ ...selectedItem, userEpisodes: res.data.userEpisodes, progress: res.data.progress });
+      }
+      fetchLibrary();
+    } catch (e) {
+      console.error('Season toggle failed');
+    }
+  };
+
+  const handleLinkEpisodePath = async (mediaId, number, season) => {
+    const filePath = window.prompt("Enter absolute path for this episode file:");
+    if (!filePath) return;
+    
+    try {
+      const res = await axios.post(`${API_BASE}/media/${mediaId}/batch-episodes`, {
+        episodes: [{ number, season, path: filePath }]
+      });
+      if (selectedItem && selectedItem.id === mediaId) {
+        setSelectedItem({ ...selectedItem, userEpisodes: res.data.userEpisodes });
+      }
+    } catch (e) {
+      alert("Failed to link episode path");
     }
   };
 
@@ -283,8 +342,11 @@ const App = () => {
     const matchesLocal = showLocalOnly ? item?.local?.available : true;
     const matchesStatus = statusFilter === 'all' ? true : item?.status?.toLowerCase() === statusFilter.toLowerCase();
     const matchesRating = minRatingFilter === 0 ? true : (item?.rating >= minRatingFilter);
-    return matchesSearch && matchesLocal && matchesStatus && matchesRating;
+    const matchesBrand = brandFilter === 'all' ? true : item?.brand === brandFilter;
+    return matchesSearch && matchesLocal && matchesStatus && matchesRating && matchesBrand;
   });
+
+  const uniqueBrands = Array.from(new Set(safeLibrary.map(i => i.brand).filter(Boolean))).sort();
 
   const handleSave = async (updatedItem) => {
     const newLibrary = { media: safeLibrary.map(it => it.id === updatedItem.id ? updatedItem : it) };
@@ -509,10 +571,22 @@ const App = () => {
               <option value={9}>9.0+ ⭐</option>
             </select>
 
+            <select
+              className="island-select"
+              value={brandFilter}
+              onChange={(e) => setBrandFilter(e.target.value)}
+              title="Filter by Studio/Publisher"
+              style={{ minWidth: '150px' }}
+            >
+              <option value="all">Any Studio/Company</option>
+              {uniqueBrands.map(b => <option key={b} value={b}>{b}</option>)}
+            </select>
+
             <button
               className={`island-btn ${showLocalOnly ? 'active' : ''}`}
               onClick={() => setShowLocalOnly(!showLocalOnly)}
               title={showLocalOnly ? "Show All Media" : "Filter Local Only"}
+              style={{ marginLeft: '10px' }}
             >
               <Download size={20} />
             </button>
@@ -775,13 +849,13 @@ const App = () => {
                     <label className="form-label">Progress (Current)</label>
                     <input type="number" className="form-input" value={selectedItem.progress.current} onChange={(e) => setSelectedItem({ ...selectedItem, progress: { ...selectedItem.progress, current: parseInt(e.target.value) } })} />
                   </div>
-                  <div className="form-group">
-                    <label className="form-label">Total</label>
-                    <input type="number" className="form-input" value={selectedItem.progress.total} onChange={(e) => setSelectedItem({ ...selectedItem, progress: { ...selectedItem.progress, total: parseInt(e.target.value) } })} />
+                   <div className="form-group">
+                    <label className="form-label">Total (Managed by Provider)</label>
+                    <input type="number" className="form-input" value={selectedItem.progress.total} disabled style={{ opacity: 0.5, cursor: 'not-allowed' }} />
                   </div>
                   <div className="form-group">
-                    <label className="form-label">Year</label>
-                    <input className="form-input" value={selectedItem.metadata?.year || ''} onChange={(e) => setSelectedItem({ ...selectedItem, metadata: { ...selectedItem.metadata, year: e.target.value } })} />
+                    <label className="form-label">Year (Managed by Provider)</label>
+                    <input className="form-input" value={selectedItem.metadata?.year || ''} disabled style={{ opacity: 0.5, cursor: 'not-allowed' }} />
                   </div>
                   <div className="form-group" style={{ gridColumn: 'span 2' }}>
                     <label className="form-label">Local File Path</label>
@@ -792,7 +866,14 @@ const App = () => {
                         value={selectedItem.local?.path || ''}
                         onChange={(e) => {
                           const newPath = e.target.value;
-                          setSelectedItem({ ...selectedItem, local: { ...selectedItem.local, path: newPath } });
+                          setSelectedItem({ 
+                            ...selectedItem, 
+                            local: { 
+                              ...selectedItem.local, 
+                              path: newPath,
+                              available: newPath.trim() !== "" 
+                            } 
+                          });
                         }}
                       />
                       <button
@@ -825,7 +906,19 @@ const App = () => {
               {seasons.length > 0 && (
                 <div className="episodes-section" style={{ marginTop: 40 }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
-                    <h3 className="section-title" style={{ marginBottom: 0 }}>Episodes</h3>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '15px' }}>
+                      <h3 className="section-title" style={{ marginBottom: 0 }}>Episodes</h3>
+                      <button 
+                        className="btn btn-secondary" 
+                        style={{ padding: '4px 12px', fontSize: '11px', background: 'rgba(100, 255, 218, 0.1)', color: '#64ffda', border: '1px solid rgba(100, 255, 218, 0.2)' }}
+                        onClick={() => {
+                          const anyUnwatched = currentEpisodes.some(ep => !selectedItem.userEpisodes?.[`${ep.season || selectedSeason}_${ep.number || ep.mal_id}`]?.watched);
+                          handleToggleSeasonWatched(selectedItem.id, currentEpisodes, anyUnwatched);
+                        }}
+                      >
+                        {currentEpisodes.some(ep => !selectedItem.userEpisodes?.[`${ep.season || selectedSeason}_${ep.number || ep.mal_id}`]?.watched) ? "Mark Season Watched" : "Mark Season Unwatched"}
+                      </button>
+                    </div>
                     <select
                       className="form-input"
                       style={{ width: 'auto' }}
@@ -874,12 +967,30 @@ const App = () => {
                                   <Play size={12} fill="currentColor" style={{ display: 'inline', marginRight: 4 }} /> Play
                                 </button>
                               )}
+                              
                               <button
                                 className="btn-secondary"
-                                style={{ padding: '4px 10px', fontSize: '12px' }}
-                                onClick={() => handleBulkProgress(selectedItem, ep.number || ep.mal_id)}
+                                style={{ padding: '4px 8px', fontSize: '12px', opacity: 0.6 }}
+                                onClick={() => handleLinkEpisodePath(selectedItem.id, ep.number || ep.mal_id, ep.season || selectedSeason)}
+                                title={selectedItem.userEpisodes?.[`${ep.season || selectedSeason}_${ep.number || ep.mal_id}`]?.path || "Link individual file"}
                               >
-                                Mark Watched
+                                <LinkIcon size={12} style={{ color: selectedItem.userEpisodes?.[`${ep.season || selectedSeason}_${ep.number || ep.mal_id}`]?.path ? '#64ffda' : 'inherit' }} />
+                              </button>
+
+                              <button
+                                className={selectedItem.userEpisodes?.[`${ep.season || selectedSeason}_${ep.number || ep.mal_id}`]?.watched ? "btn-primary" : "btn-secondary"}
+                                style={{ 
+                                  padding: '4px 10px', 
+                                  fontSize: '12px',
+                                  ...(selectedItem.userEpisodes?.[`${ep.season || selectedSeason}_${ep.number || ep.mal_id}`]?.watched ? { background: '#64ffda', color: '#0a192f' } : {})
+                                }}
+                                onClick={() => {
+                                  const isWatched = selectedItem.userEpisodes?.[`${ep.season || selectedSeason}_${ep.number || ep.mal_id}`]?.watched;
+                                  handleToggleEpisodeWatched(selectedItem.id, ep.number || ep.mal_id, ep.season || selectedSeason, !isWatched);
+                                  if (!isWatched) handleBulkProgress(selectedItem, ep.number || ep.mal_id);
+                                }}
+                              >
+                                {selectedItem.userEpisodes?.[`${ep.season || selectedSeason}_${ep.number || ep.mal_id}`]?.watched ? "Watched" : "Mark Watched"}
                               </button>
                             </div>
                           </div>

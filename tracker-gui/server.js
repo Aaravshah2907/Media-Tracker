@@ -71,6 +71,7 @@ const enrichFromCache = (item, cache) => {
     
     // Core details based on type
     const details = {};
+    let brand = null;
     
     if (item.type === 'movie') {
         details.runtime = cache.runtime;
@@ -79,6 +80,7 @@ const enrichFromCache = (item, cache) => {
         details.revenue = cache.revenue;
         details.collection = cache.belongs_to_collection?.name;
         details.status = cache.status;
+        brand = cache.production_companies?.[0]?.name;
 
         // Auto-convert movies with 0/1 progress to runtime-based tracking
         if (item.progress.unit === 'movie' || !item.progress.total || item.progress.total <= 1) {
@@ -86,7 +88,8 @@ const enrichFromCache = (item, cache) => {
             item.progress.unit = 'min';
         }
     } else if (item.type === 'tv') {
-        details.network = cache.network?.name || cache.webChannel?.name;
+        brand = cache.network?.name || cache.webChannel?.name;
+        details.network = brand;
         details.premiered = cache.premiered;
         details.ended = cache.ended;
         details.status = cache.status;
@@ -94,8 +97,9 @@ const enrichFromCache = (item, cache) => {
         details.official_site = cache.officialSite;
     } else if (item.type === 'book') {
         const info = cache.volumeInfo || {};
+        brand = info.publisher;
         details.authors = info.authors || [];
-        details.publisher = info.publisher;
+        details.publisher = brand;
         details.published_date = info.publishedDate;
         details.page_count = info.pageCount;
         details.isbn = info.industryIdentifiers || [];
@@ -103,17 +107,101 @@ const enrichFromCache = (item, cache) => {
     } else if (item.type === 'anime' || item.type === 'manga') {
         // Anilist/Jikan structure
         const data = cache.data?.Media || cache.data || cache;
-        details.studios = data.studios?.nodes?.map(s => s.name) || (data.producers?.map(p => p.name)) || [];
+        const studios = data.studios?.nodes?.map(s => s.name) || (data.producers?.map(p => p.name)) || [];
+        brand = studios[0];
+        details.studios = studios;
         details.source = data.source;
         details.status = data.status;
         details.serialization = data.serialization || (data.serializations?.map(s => s.name)) || "";
     }
     
+    item.brand = brand;
     item.details = details;
     return item;
 };
 
 // Search Proxy API
+app.post('/api/media/:id/batch-episodes', async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { episodes } = req.body; // format: [{ number, season, watched }]
+        const filename = getMediaFilename(id);
+        const filePath = path.join(MEDIA_DIR, filename);
+        
+        if (await fs.pathExists(filePath)) {
+            const item = await fs.readJson(filePath);
+            if (!item.userEpisodes) item.userEpisodes = {};
+            
+            episodes.forEach(ep => {
+                const epKey = `${ep.season || 0}_${ep.number}`;
+                item.userEpisodes[epKey] = {
+                    ...(item.userEpisodes[epKey] || {}),
+                    ...ep
+                };
+            });
+            
+            // Check for progress update
+            const anyWatched = episodes.some(ep => ep.watched);
+            if (anyWatched) {
+                // Find highest absolute progress
+                try {
+                    const cacheFilename = id.replace(/[:\/]/g, '_') + '.json';
+                    const subfolders = ['tv', 'anime'];
+                    let allEps = [];
+                    
+                    for (const sub of subfolders) {
+                        const cachePath = path.join(CACHE_DIR, sub, cacheFilename);
+                        if (fs.existsSync(cachePath)) {
+                            const cache = await fs.readJson(cachePath);
+                            if (sub === 'tv') allEps = cache._embedded?.episodes || [];
+                            else if (sub === 'anime') {
+                                const epFile = path.join(CACHE_DIR, 'anime', cacheFilename.replace('.json', '_episodes.json'));
+                                if (fs.existsSync(epFile)) {
+                                    const epData = await fs.readJson(epFile);
+                                    allEps = epData.data || [];
+                                }
+                            }
+                            break;
+                        }
+                    }
+
+                    if (allEps.length > 0) {
+                        // Find the absolute index of the highest watched episode in the sidecar
+                        let maxProgress = 0;
+                        Object.keys(item.userEpisodes).forEach(key => {
+                            const ep = item.userEpisodes[key];
+                            if (ep.watched) {
+                                const idx = allEps.findIndex(e => (e.number === ep.number || e.mal_id === ep.number) && (e.season === ep.season || !e.season));
+                                if (idx !== -1 && (idx + 1) > maxProgress) {
+                                    maxProgress = idx + 1;
+                                }
+                            }
+                        });
+
+                        if (maxProgress > item.progress.current) {
+                            item.progress.current = maxProgress;
+                            // Also update Library index
+                            const libData = await fs.readJson(LIBRARY_FILE);
+                            const libIdx = libData.media.findIndex(m => m.id === id);
+                            if (libIdx !== -1) {
+                                libData.media[libIdx].progress.current = maxProgress;
+                                await fs.writeJson(LIBRARY_FILE, libData, { spaces: 2 });
+                            }
+                        }
+                    }
+                } catch (e) { console.error("Auto-progress failed:", e); }
+            }
+            
+            await fs.writeJson(filePath, item, { spaces: 2 });
+            res.json({ success: true, userEpisodes: item.userEpisodes, progress: item.progress });
+        } else {
+            res.status(404).json({ error: 'Sidecar not found' });
+        }
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
 app.get('/api/search/:type/:query', async (req, res) => {
     const { type, query } = req.params;
     const q = encodeURIComponent(query);
@@ -185,7 +273,7 @@ app.get('/api/search/:type/:query', async (req, res) => {
                     year: info.publishedDate?.split('-')[0],
                     poster_path: info.imageLinks?.thumbnail || info.imageLinks?.smallThumbnail || null,
                     overview: info.description || '', // This is the blurb
-                    vote_average: info.averageRating || 0,
+                    vote_average: (info.averageRating || 0) * 2,
                     episodes: info.pageCount || 0,
                     source: { provider: 'googlebooks', id: item.id }
                 };
@@ -253,6 +341,20 @@ app.post('/api/add-to-library', async (req, res) => {
             popularity: 0
         };
         
+        // Try to enrich brand from cache immediately
+        try {
+            const cacheFilename = newItem.id.replace(/[:\/]/g, '_') + '.json';
+            const subfolders = ['tv', 'anime', 'movie', 'book'];
+            for (const sub of subfolders) {
+                const cp = path.join(CACHE_DIR, sub, cacheFilename);
+                if (await fs.pathExists(cp)) {
+                    const cache = await fs.readJson(cp);
+                    newItem = enrichFromCache(newItem, cache);
+                    break;
+                }
+            }
+        } catch (e) {}
+
         // Prevent duplicates
         if (!data.media.some(m => m.id === newItem.id)) {
             // 1. Save FULL data to media/ folder
@@ -269,6 +371,7 @@ app.post('/api/add-to-library', async (req, res) => {
                 poster_path: newItem.poster_path,
                 local: newItem.local,
                 rating: newItem.vote_average,
+                brand: newItem.brand || "",
                 metadata: { year: newItem.metadata?.year, release_date: newItem.metadata?.release_date },
                 source: newItem.source,
                 file: `media/${filename}`
@@ -285,8 +388,27 @@ app.post('/api/add-to-library', async (req, res) => {
 // API Endpoints
 app.get('/api/library', async (req, res) => {
     try {
-        const data = await fs.readFile(LIBRARY_FILE, 'utf8');
-        res.json(JSON.parse(data));
+        const raw = await fs.readFile(LIBRARY_FILE, 'utf8');
+        const data = JSON.parse(raw);
+        
+        // Auto-detect availability
+        let changed = false;
+        const media = data.media || [];
+        for (let item of media) {
+            if (item.local?.path) {
+                const exists = fs.existsSync(item.local.path);
+                if (item.local.available !== exists) {
+                    item.local.available = exists;
+                    changed = true;
+                }
+            }
+        }
+        
+        if (changed) {
+            await fs.writeJson(LIBRARY_FILE, data, { spaces: 2 });
+        }
+        
+        res.json(data);
     } catch (err) {
         res.status(500).json({ error: 'Failed to read library' });
     }
@@ -321,6 +443,7 @@ app.post('/api/library', async (req, res) => {
                         poster_path: item.poster_path,
                         local: item.local,
                         rating: item.rating || item.vote_average,
+                        brand: item.brand,
                         metadata: { year: item.metadata?.year, release_date: item.metadata?.release_date },
                         file: `media/${filename}`
                     };
@@ -474,6 +597,21 @@ app.post('/api/open-vlc-episode', async (req, res) => {
         }
         
         let targetPath = item.local.path;
+
+        // If it is just an index item, try loading the sidecar for custom episode paths
+        const filename = getMediaFilename(mediaId);
+        const sidecarPath = path.join(MEDIA_DIR, filename);
+        let userEp = null;
+        if (await fs.pathExists(sidecarPath)) {
+            const sidecar = await fs.readJson(sidecarPath);
+            const epKey = `${seasonNumber || 0}_${episodeNumber}`;
+            if (sidecar.userEpisodes && sidecar.userEpisodes[epKey]) {
+                userEp = sidecar.userEpisodes[epKey];
+                if (userEp.path && fs.existsSync(userEp.path)) {
+                    targetPath = userEp.path;
+                }
+            }
+        }
         
         if (!fs.existsSync(targetPath)) {
             return res.status(404).json({ error: 'Base path does not exist' });

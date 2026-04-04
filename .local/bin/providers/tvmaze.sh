@@ -47,6 +47,7 @@ tvmaze_add() {
       type: "tv",
       subtype: null,
       status: "planned",
+      brand: (.network?.name // .webChannel?.name // "Unknown"),
       progress: { current: 0, total: $total_episodes, unit: "episode" },
       seasons: { current: 0, total: $total_seasons },
       metadata: {

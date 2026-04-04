@@ -24,6 +24,9 @@ A high-performance, aesthetic personal media tracker designed for Movies, TV Sho
 - **Pixel-Perfect Modals**: Posters are locked to a cinematic 2:3 aspect ratio, ensuring no distortion across detail views.
 - **Sidecar Architecture**: Lightning-fast performance by separating a minimal `library.json` index from high-fidelity metadata sidecars in `/media/`.
 - **Specialized Metadata**: Deep-stats for every type: Budget/Revenue for Movies, Networks for TV, Studios for Anime, and Publishers/Authors for Books.
+- **Advanced Library Filtering**: Dynamically browse your collection by **Production Company**, **Network**, or **Publisher** (e.g., HBO, MAPPA, Disney) using the new Studio filter.
+- **Absolute Episode Sync**: Precise progress tracking for TV/Anime series. Marking an episode as watched automatically advances the library's absolute progress (e.g., HIMYM 208/208).
+- **Precision Episode Tracking**: Individually link episodes to local file paths and mark checkmarks per-episode with sidecar persistence.
 
 ### 🔄 Intelligent Synchronization
 - **VLC (Live Sync)**: Real-time minute tracking for Movies. The toggle syncs your current playback timestamp directly to the tracker (e.g. `45m / 148m`).

@@ -146,6 +146,7 @@ while true; do
             poster_path: .poster_path,
             local: .local,
             rating: (.rating // .vote_average // 0),
+            brand: (.brand // ""),
             metadata: { 
               year: (.metadata.year // null), 
               release_date: (.metadata.release_date // null),
