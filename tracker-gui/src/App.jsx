@@ -671,9 +671,9 @@ const App = () => {
                                   e.stopPropagation();
                                   axios.post(`${API_BASE}/open`, { filePath: item.local.path, type: item.type });
                                 }}
-                                title={item.type === 'book' ? "Open Book" : "Play Media"}
+                                title={(item.type === 'book' || item.type === 'manga') ? "Resume Reading" : "Play Media"}
                               >
-                                {item.type === 'book' ? <ExternalLink size={24} /> : <Play fill="currentColor" size={24} style={{ marginLeft: '4px' }} />}
+                                {(item.type === 'book' || item.type === 'manga') ? <BookOpen size={24} /> : <Play fill="currentColor" size={24} style={{ marginLeft: '4px' }} />}
                               </button>
                             )}
                           </div>
