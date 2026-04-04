@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import axios from 'axios';
-import { Search, Loader2, Edit3, X, Save, ExternalLink, RefreshCw, Send, ZapOff, CheckCircle, Folder, Play, Download, PlusCircle, Trash2, Plus, Filter, Link as LinkIcon } from 'lucide-react';
+import { Search, Loader2, Edit3, X, Save, ExternalLink, RefreshCw, Send, ZapOff, CheckCircle, Folder, Play, Download, PlusCircle, Trash2, Plus, Filter, Link as LinkIcon, BookOpen } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 
 const API_BASE = 'http://localhost:3001/api';
@@ -779,8 +779,8 @@ const App = () => {
                               className="btn btn-primary"
                               style={{ padding: '8px 16px', fontSize: '14px', display: 'flex', alignItems: 'center', gap: '8px', borderRadius: '100px', boxShadow: '0 0 15px rgba(100, 255, 218, 0.3)' }}
                             >
-                              {selectedItem.type === 'book' ? <ExternalLink size={16} /> : <Play size={16} fill="currentColor" />}
-                              {selectedItem.type === 'book' ? 'Open Book' : 'Play Media'}
+                              {(selectedItem.type === 'book' || selectedItem.type === 'manga') ? <BookOpen size={16} /> : <Play size={16} fill="currentColor" />}
+                              {(selectedItem.type === 'book' || selectedItem.type === 'manga') ? 'Resume Reading' : 'Play Media'}
                             </button>
                           )}
                         </div>

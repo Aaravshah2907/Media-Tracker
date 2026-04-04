@@ -391,15 +391,47 @@ app.get('/api/library', async (req, res) => {
         const raw = await fs.readFile(LIBRARY_FILE, 'utf8');
         const data = JSON.parse(raw);
         
-        // Auto-detect availability
+        // Auto-detect availability AND Brand metadata for existing items
         let changed = false;
         const media = data.media || [];
         for (let item of media) {
+            // 1. Availability check
             if (item.local?.path) {
                 const exists = fs.existsSync(item.local.path);
                 if (item.local.available !== exists) {
                     item.local.available = exists;
                     changed = true;
+                }
+            }
+
+            // 2. Brand Enrichment (if missing)
+            if (item.brand === undefined || item.brand === null) {
+                const cacheFilename = item.id.replace(/[:\/]/g, '_') + '.json';
+                const subfolders = ['tv', 'anime', 'movie', 'book'];
+                for (const sub of subfolders) {
+                    const cp = path.join(CACHE_DIR, sub, cacheFilename);
+                    if (fs.existsSync(cp)) {
+                        const cache = await fs.readJson(cp);
+                        // Mini enrichment inline to avoid full object replacement
+                        let b = null;
+                        if (item.type === 'movie') b = cache.production_companies?.[0]?.name;
+                        else if (item.type === 'tv') b = cache.network?.name || cache.webChannel?.name;
+                        else if (item.type === 'book') b = cache.volumeInfo?.publisher;
+                        else if (item.type === 'anime' || item.type === 'manga') {
+                             const data = cache.data?.Media || cache.data || cache;
+                             const studios = data.studios?.nodes?.map(s => s.name) || (data.producers?.map(p => p.name)) || [];
+                             b = studios[0];
+                        }
+                        
+                        if (b) {
+                            item.brand = b;
+                            changed = true;
+                        } else {
+                            item.brand = ""; // Done checking, don't repeat
+                            changed = true;
+                        }
+                        break;
+                    }
                 }
             }
         }
