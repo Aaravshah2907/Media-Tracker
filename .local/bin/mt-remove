@@ -6,6 +6,7 @@ set -euo pipefail
 DATA_DIR="${DATA_DIR:-$HOME/Documents/Personal/Tracker}"
 LIB="$DATA_DIR/library.json"
 CACHE_DIR="$DATA_DIR/cache"
+MEDIA_DIR="$DATA_DIR/media"
 
 # --- Parse Arguments ---
 target_id=""
@@ -56,6 +57,11 @@ source_id=$(echo "$item_json" | jq -r '.source.id')
 updated=$(jq --arg id "$id" '.media |= map(select(.id != $id))' "$LIB")
 echo "$updated" > "$LIB"
 
+# --- Remove from Media Folder ---
+safe_id="${id//[:\/]/_}"
+media_file="$MEDIA_DIR/${safe_id}.json"
+[ -f "$media_file" ] && rm -f "$media_file"
+
 # --- Cleanup Cache Files ---
 case "$type" in
     anime|manga) 
@@ -69,7 +75,11 @@ case "$type" in
         ;;
     tv)          file_to_remove="$CACHE_DIR/tv/tvmaze_${source_id}.json" ;;
     movie)       file_to_remove="$CACHE_DIR/movie/tmdb_${source_id}.json" ;;
-    book)        file_to_remove="$CACHE_DIR/book/openlibrary_${id//[:\/]/_}.json" ;;
+    book)        
+        # Try both safe_id and raw source_id
+        file_to_remove="$CACHE_DIR/book/${safe_id}.json"
+        [ ! -f "$file_to_remove" ] && file_to_remove="$CACHE_DIR/book/${source_id}.json"
+        ;;
 esac
 
 [ -f "$file_to_remove" ] && rm -f "$file_to_remove"

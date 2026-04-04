@@ -2,6 +2,7 @@
 
 DATA_DIR="${DATA_DIR:-$HOME/Documents/Personal/Tracker}"
 LIBRARY_JSON="$DATA_DIR/library.json"
+MEDIA_DIR="$DATA_DIR/media"
 BACKUP_DIR="$DATA_DIR/backups"
 
 # Create backups directory if it doesn't exist
@@ -48,8 +49,16 @@ while ! $EXIT; do
             break
         fi
 
-        # --- Load current values ---
-        ITEM=$(jq -r --arg TITLE "$TITLE" --arg TYPE "$TYPE" '.media[] | select(.title==$TITLE and .type==$TYPE)' "$LIBRARY_JSON")
+        # --- Load current values (from sidecar) ---
+        ID=$(jq -r --arg TITLE "$TITLE" --arg TYPE "$TYPE" '.media[] | select(.title==$TITLE and .type==$TYPE) | .id' "$LIBRARY_JSON")
+        SAFE_ID="${ID//[:\/]/_}"
+        MEDIA_FILE="$MEDIA_DIR/${SAFE_ID}.json"
+        
+        if [[ -f "$MEDIA_FILE" ]]; then
+            ITEM=$(cat "$MEDIA_FILE")
+        else
+            ITEM=$(jq -r --arg TITLE "$TITLE" --arg TYPE "$TYPE" '.media[] | select(.title==$TITLE and .type==$TYPE)' "$LIBRARY_JSON")
+        fi
         STATUS=$(echo "$ITEM" | jq -r '.status // ""')
         CURRENT=$(echo "$ITEM" | jq -r '.progress.current // 0')
         TOTAL=$(echo "$ITEM" | jq -r '.progress.total // 0')
@@ -77,25 +86,48 @@ while ! $EXIT; do
             NEW_SEASONS_TOTAL=${NEW_SEASONS_TOTAL:-$SEASONS_TOTAL}
         fi
 
-        # --- Update JSON in-place ---
-        tmp=$(mktemp)
-        jq --arg TITLE "$TITLE" --arg TYPE "$TYPE" \
-           --arg STATUS "$NEW_STATUS" \
-           --argjson CURRENT "$NEW_CURRENT" \
-           --argjson TOTAL "$NEW_TOTAL" \
-           --argjson SEASONS_CURRENT "${NEW_SEASONS_CURRENT:-0}" \
-           --argjson SEASONS_TOTAL "${NEW_SEASONS_TOTAL:-0}" \
-           '(.media[] | select(.title==$TITLE and .type==$TYPE) | .status) |= $STATUS |
-            (.media[] | select(.title==$TITLE and .type==$TYPE) | .progress.current) |= $CURRENT |
-            (.media[] | select(.title==$TITLE and .type==$TYPE) | .progress.total) |= $TOTAL |
-            if .type=="tv" or .type=="anime" then
-                (.seasons.current) |= $SEASONS_CURRENT |
-                (.seasons.total) |= $SEASONS_TOTAL
-            else . end |
-            if .type=="tv" then
-                .last_updated = (now | todate)
-            else .
-            end' "$LIBRARY_JSON" > "$tmp" && mv "$tmp" "$LIBRARY_JSON"
+        # --- Update sidecar ---
+        UPDATED_ITEM=$(echo "$ITEM" | jq --arg STATUS "$NEW_STATUS" \
+            --argjson CURRENT "$NEW_CURRENT" \
+            --argjson TOTAL "$NEW_TOTAL" \
+            --argjson SEASONS_CURRENT "${NEW_SEASONS_CURRENT:-0}" \
+            --argjson SEASONS_TOTAL "${NEW_SEASONS_TOTAL:-0}" \
+            '.status = $STATUS |
+             .progress.current = $CURRENT |
+             .progress.total = $TOTAL |
+             if .type=="tv" or .type=="anime" then
+                .seasons.current = $SEASONS_CURRENT |
+                .seasons.total = $SEASONS_TOTAL
+             else . end |
+             .timestamps.updated = (now | todate)')
+        
+        echo "$UPDATED_ITEM" > "$MEDIA_FILE"
+
+        # --- Update index ---
+        # We need to maintain the minimal fields we expect in library.json
+        MINIMAL_ITEM=$(echo "$UPDATED_ITEM" | jq -c '
+          {
+            id: .id,
+            title: .title,
+            type: .type,
+            status: .status,
+            progress: .progress,
+            poster_path: .poster_path,
+            local: .local,
+            rating: (.rating // .vote_average // 0),
+            metadata: { 
+              year: (.metadata.year // null), 
+              release_date: (.metadata.release_date // null),
+              author: (.metadata.author // []) 
+            },
+            source: .source,
+            file: ("media/" + (.id | gsub("[:/]"; "_")) + ".json")
+          }
+        ')
+
+        jq --arg TITLE "$TITLE" --arg TYPE "$TYPE" --argjson NEW_ITEM "$MINIMAL_ITEM" \
+           '(.media[] | select(.title==$TITLE and .type==$TYPE)) |= $NEW_ITEM' \
+           "$LIBRARY_JSON" > "$tmp" && mv "$tmp" "$LIBRARY_JSON"
 
         echo "✅ Updated $TITLE"
         sleep 0.2

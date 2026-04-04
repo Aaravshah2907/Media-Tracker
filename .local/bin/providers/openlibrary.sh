@@ -59,40 +59,38 @@ openlibrary_add() {
     fi
 
     # Output uniform JSON
-    jq -n \
-        --arg id "openlibrary:$key" \
-        --arg title "$title" \
-        --arg type "book" \
-        --arg status "planned" \
-        --arg unit "page" \
-        --arg author "$author" \
-        --arg series "$series" \
-        --arg description "$description" \
-        --argjson year "$year" \
-        --argjson subjects "$subjects" \
-        --argjson isbn "$isbn" \
-        '{
+    # Output uniform JSON
+    echo "$doc" | jq --arg id "ol:$key" --arg now "$(date -u +"%Y-%m-%dT%H:%M:%SZ")" --arg author "$author" --arg series "$series" --arg year "$year" '
+        {
             id: $id,
-            title: $title,
-            type: $type,
+            title: .title,
+            type: "book",
             subtype: null,
-            status: $status,
-            progress: { current: 0, total: null, unit: $unit },
-            seasons: { current: 0, total: null },
+            status: (.status // "planned"),
+            progress: { current: 0, total: (.number_of_pages // 0), unit: "page" },
+            seasons: null,
             metadata: {
-                year: $year,
-                release_date: (.first_publish_date // $year | tostring // null),
-                genres: $subjects,
+                year: ($year | tonumber?),
+                release_date: (.publish_date // $year | tostring // null),
+                genres: (.subjects // []),
                 author: [$author],
                 series: $series,
-                isbn: $isbn
+                isbn: (.isbn_13 // .isbn_10 // [])
             },
             source: { provider: "openlibrary", id: $id },
             local: { path: "", available: false },
-            timestamps: {
-                added: (now | strftime("%Y-%m-%dT%H:%M:%SZ")),
-                updated: (now | strftime("%Y-%m-%dT%H:%M:%SZ"))
+            details: {
+                authors: [$author],
+                publisher: (.publishers[0] // "Unknown"),
+                published_date: (.publish_date // null),
+                page_count: .number_of_pages,
+                isbn: (.isbn_13 // .isbn_10 // []),
+                series: $series
             },
-            overview: $description
-        }'
+            timestamps: { added: $now, updated: $now },
+            overview: (if .description | type == "object" then .description.value else (.description // "") end),
+            poster_path: (if .covers then "https://covers.openlibrary.org/b/id/\(.covers[0])-L.jpg" else "" end),
+            rating: 0
+        }
+    '
 }

@@ -2,6 +2,7 @@
 library.json
 library.bk.json
 cache/
+media/
 backups/
 format.json
 
@@ -16,3 +17,4 @@ format.json
 **/build/
 .npm
 *.log
+LOGBOOK.md

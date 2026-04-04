@@ -30,29 +30,44 @@ tmdb_add() {
         return 1
     fi
 
-    # Take the first result and map to library schema
-    echo "$json" | jq --arg provider "tmdb" --arg now "$now" '
-        .results[0] 
-        | {
+    # Take the first results ID
+    id=$(echo "$json" | jq -r '.results[0].id')
+    
+    # Fetch FULL details for this specific movie ID
+    full_json=$(curl -s -H "Authorization: Bearer $TMDB_TOKEN" \
+                 -H "accept: application/json" \
+                 "https://api.themoviedb.org/3/movie/${id}?language=en-US")
+
+    # Merge and map to our schema
+    echo "$full_json" | jq --arg provider "tmdb" --arg now "$now" '
+        {
             id: "\($provider):\(.id)",
-            title: .title,
+            title: (.title // .name),
             type: "movie",
             subtype: null,
             status: "planned",
             progress: { current: 0, total: 1, unit: "movie" },
             seasons: null,
             metadata: { 
-                year: (.release_date[0:4] // null), 
-                release_date: (.release_date // null),
-                genres: .genre_ids 
+                year: (.release_date[0:4] // .first_air_date[0:4] // null), 
+                release_date: (.release_date // .first_air_date // null),
+                genres: (.genres | map(.name)) 
             },
             source: {
                 provider: $provider,
                 id: (.id|tostring)
             },
             local: { path: "", available: false },
+            details: {
+                runtime: .runtime,
+                tagline: .tagline,
+                budget: .budget,
+                revenue: .revenue,
+                collection: .belongs_to_collection?.name,
+                production_companies: (.production_companies | map(.name))
+            },
             timestamps: { added: $now, updated: $now },
-            adult, backdrop_path, overview, poster_path, original_language, original_title, popularity, vote_average, vote_count
+            overview, poster_path, backdrop_path, vote_average, vote_count, tagline
         }
     '
 }

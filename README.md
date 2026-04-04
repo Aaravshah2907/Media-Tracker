@@ -19,10 +19,16 @@ A high-performance, aesthetic personal media tracker designed for Movies, TV Sho
 - **Interactive Filtering**: Dynamic "Any Rating" header selector allows you to instantly filter your library (e.g., only show items rated 8.5+).
 
 ### 🖥️ Cinematic Web Dashboard
-- **Pure Web Discovery**: Directly search and add media from Jikan, TVMaze, and TMDb without ever opening the terminal.
+- **Pure Web Discovery**: Directly search and add media from Jikan, TVMaze, Google Books, and TMDb without ever opening the terminal.
 - **Glassmorphism UI**: High-end React interface built with Framer Motion and responsive layouts.
 - **Pixel-Perfect Modals**: Posters are locked to a cinematic 2:3 aspect ratio, ensuring no distortion across detail views.
-- **Offline Cache**: Lightning-fast performance by serving metadata from a local JSON-based cache directory.
+- **Sidecar Architecture**: Lightning-fast performance by separating a minimal `library.json` index from high-fidelity metadata sidecars in `/media/`.
+- **Specialized Metadata**: Deep-stats for every type: Budget/Revenue for Movies, Networks for TV, Studios for Anime, and Publishers/Authors for Books.
+
+### 🔄 Intelligent Synchronization
+- **VLC (Live Sync)**: Real-time minute tracking for Movies. The toggle syncs your current playback timestamp directly to the tracker (e.g. `45m / 148m`).
+- **Apple Books (Persistent Sync)**: Direct SQLite database integration. Automatically pulls your reading percentage (High-Watermark) even if the app was closed hours ago.
+- **Smart Open**: One-click playback logic that chooses the best app for your media: VLC for video, Preview for PDFs, Apple Books for EPUBs, and Simple Comic for CBR/CBZ.
 
 ---
 
@@ -116,10 +122,12 @@ Now, just type `tracker` in your terminal anytime to launch your library!
 
 ## 🍱 Project Architecture
 
-This is a **database-less** system designed for speed and portability.
-1.  **`library.json`**: The single source of truth for your media collection.
-2.  **`cache/`**: A directory structure housing full REST responses from providers, ensuring you never hit API rate limits twice for the same data.
-3.  **Shell Sync**: The `mt-info` script intelligently identifies missing cache files and performs rate-limited fetches to build your local catalogs.
+This is a **database-less, split-file system** designed for extreme portability and scale.
+
+1.  **`library.json` (The Minimal Index)**: A lightweight index containing only the essential metadata needed to render the dashboard (titles, status, progress, ratings). This ensures the app loads in milliseconds regardless of library size.
+2.  **`media/` (The Specialized Sidecars)**: Individual JSON files for every item in your library. These store the high-depth metadata (overview, specialized details, cast/crew) and your personal local file paths.
+3.  **`cache/`**: A structure housing raw, unedited REST responses from providers. This acts as a "Source of Truth" to rebuild or refresh your sidecars without re-hitting API rate limits.
+4.  **The Shell Bridge**: The `mt-info` script identifies missing entries and performs automated, rate-limited fetches to build your local environment.
 
 ---
 
@@ -133,24 +141,15 @@ Contributions are welcome! Please follow these steps:
 
 ## 🛣️ Future Functionalities (Help Required!)
 
-This project is constantly evolving, and we are looking for open-source contributors to help build the next phase of the Media Tracker! Here are the major features on our roadmap to make this a fully self-sufficient ecosystem:
+This project is constantly evolving. Here are the major features on our roadmap:
 
-1. **Torrent Downloader Integration**: A built-in system to search and trigger torrent downloads directly from the web dashboard for planned media.
-2. **Auto-Locate Local Files**: A background daemon or script that automatically scans local directories for episodes and movies, attaching the correct local path to `library.json` so the "One-Click Play" feature works seamlessly.
-3. **Analytics & Statistics**: Translating your local JSON tracking history into visual data (e.g., total hours watched, genre breakdowns, and rating deviations).
-4. **Calendar & Notifications**: A visual calendar view plotting out exact air dates for tracking ongoing anime and TV shows without leaving the app.
-5. **Automated Metadata Refresh**: Implementing a lightweight Cron-Job that runs `mt-info` daily in the background to automatically update ongoing episode counts.
-6. **Cloud Export Engine**: A simple hook to backup your `library.json` or export your list back to official services (MAL, AniList, Trakt) to prevent data loss.
-7. **Custom Categorization & Filtering**: Implementing advanced filtering based on:
-    - **Production Media**: Filter your library by platform/studio (e.g., Paramount+, Netflix, Amazon Prime Video, Disney+).
-    - **User Tags & Collections**: Create custom groupings for franchises and universes like **MCU**, **Harry Potter (HP)**, **DCEU**, or **Star Wars**.
-8. **VLC Real-Time Sync**: Implementing a background bridge to communicate with VLC's media states, automatically incrementing your progress in `library.json` once an episode is fully viewed.
-9. **Dynamic Theme Engine**: Implementing adaptive UI colors that shift based on the dominant palette of the media poster currently in view (utilizing `colorthief`).
-10. **Cinematic Trailer Hub**: A built-in YouTube API integration to watch trailers directly within the media detail modals.
-11. **"What's Next?" Recommendations**: Localized intelligence to suggest media from your "Planned" list based on your genre preferences and high-rated items.
-12. **Global Command Palette (CMD+K)**: A high-performance search overlay to navigate the library, search for new media, or trigger CLI commands from any screen.
-13. **Media-Proxy Browser Extension**: A browser-level integration to "Add to Tracker" directly while browsing Netflix, Disney+, or MyAnimeList.
-14. **Automated E-Book Syncing**: Expanding progress tracking to e-readers (Calibre/Kindle) to automatically update page counts in `library.json`.
+1. **Torrent Downloader Integration**: A built-in system to search and trigger torrent downloads directly from the web dashboard.
+2. **Auto-Locate Local Files**: A background daemon that scans local directories and auto-links them to your library items.
+3. **Analytics & Statistics**: Transforming your JSON history into visual genre breakdowns and watch-time data.
+4. **Calendar View**: A visual air-date grid for tracking ongoing Anime and TV seasons.
+5. **MyAnimeList/AniList Export**: A simple hook to sync your local list back to cloud services to prevent data loss.
+6. **Dynamic Theme Engine**: UI colors that shift based on the dominant palette of the media poster in view.
+7. **Global Command Palette (CMD+K)**: A high-performance search overlay to navigate and trigger commands from any screen.
 
 If you are interested in building these out, please open an Issue or check the Contributing section!
 

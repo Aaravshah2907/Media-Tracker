@@ -2,8 +2,14 @@
 set -euo pipefail
 
 DATA_DIR="${DATA_DIR:-$HOME/Documents/Personal/Tracker}"
+BIN_DIR="$(cd "$(dirname "$0")" && pwd)"
 LIB="$DATA_DIR/library.json"
-PROVIDERS="$HOME/.local/bin/providers"
+MEDIA_DIR="$DATA_DIR/media"
+PROVIDERS="${BIN_DIR}/providers"
+mkdir -p "$MEDIA_DIR"
+
+# Ensure providers are sourceable
+export PROVIDERS
 
 TYPE="tv"
 SUBTYPE=""
@@ -68,8 +74,8 @@ case "$TYPE" in
     entry=$(tmdb_add "$query")
     ;;
   book)
-    source "$PROVIDERS/openlibrary.sh"
-    entry=$(openlibrary_add "$query")
+    source "$PROVIDERS/googlebooks.sh"
+    entry=$(googlebooks_add "$query")
     ;;
   *)
     echo "Unsupported type: $TYPE"
@@ -85,11 +91,36 @@ if jq -e --arg id "$id" '.media[]? | select(.id == $id)' "$LIB" > /dev/null; the
   exit 0
 fi
 
-# --- Merge ---
-updated=$(jq --argjson entry "$entry" '
+# --- Save Full Data ---
+safe_id="${id//[:\/]/_}"
+media_file="$MEDIA_DIR/${safe_id}.json"
+echo "$entry" | jq . > "$media_file"
+
+# --- Save Minimal Index ---
+minimal_entry=$(echo "$entry" | jq -c '
+  {
+    id: .id,
+    title: .title,
+    type: .type,
+    status: .status,
+    progress: .progress,
+    poster_path: .poster_path,
+    local: .local,
+    rating: (.rating // .vote_average // 0),
+    metadata: { 
+      year: (.metadata.year // null), 
+      release_date: (.metadata.release_date // null),
+      author: (.metadata.author // []) 
+    },
+    source: .source,
+    file: ("media/" + ($id | gsub("[:/]"; "_")) + ".json")
+  }
+' --arg id "$id")
+
+updated=$(jq --argjson entry "$minimal_entry" '
   .media = (.media // []) + [$entry]
 ' "$LIB")
 
 echo "$updated" > "$LIB"
 
-echo "Added: $(echo "$entry" | jq -r '.title')"
+echo "Added: $(echo "$entry" | jq -r '.title') (Full data in $media_file)"

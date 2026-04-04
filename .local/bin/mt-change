@@ -2,6 +2,7 @@
 
 DATA_DIR="${DATA_DIR:-$HOME/Documents/Personal/Tracker}"
 LIBRARY_JSON="$DATA_DIR/library.json"
+MEDIA_DIR="$DATA_DIR/media"
 BACKUP_DIR="$DATA_DIR/backups"
 
 mkdir -p "$BACKUP_DIR"
@@ -26,8 +27,17 @@ while true; do
         TITLE=$(echo "$TITLES" | fzf --prompt="Select $TYPE to edit (q to go back): ")
         [[ -z "$TITLE" || "$TITLE" == "q" || "$TITLE" == "~" ]] && break
 
-        # 3️⃣ Load current values
-        ITEM=$(jq -r --arg TITLE "$TITLE" --arg TYPE "$TYPE" '.media[] | select(.title==$TITLE and .type==$TYPE)' "$LIBRARY_JSON")
+        # 3️⃣ Load current values (from sidecar)
+        ID=$(jq -r --arg TITLE "$TITLE" --arg TYPE "$TYPE" '.media[] | select(.title==$TITLE and .type==$TYPE) | .id' "$LIBRARY_JSON")
+        SAFE_ID="${ID//[:\/]/_}"
+        MEDIA_FILE="$MEDIA_DIR/${SAFE_ID}.json"
+        
+        if [[ -f "$MEDIA_FILE" ]]; then
+            ITEM=$(cat "$MEDIA_FILE")
+        else
+            # Fallback to index if sidecar not found
+            ITEM=$(jq -r --arg TITLE "$TITLE" --arg TYPE "$TYPE" '.media[] | select(.title==$TITLE and .type==$TYPE)' "$LIBRARY_JSON")
+        fi
 
         STATUS=$(echo "$ITEM" | jq -r '.status // ""')
         CURRENT=$(echo "$ITEM" | jq -r '.progress.current // 0')
@@ -92,37 +102,63 @@ while true; do
         read -p "Overview [$OVERVIEW]: " NEW_OVERVIEW
         NEW_OVERVIEW=${NEW_OVERVIEW:-$OVERVIEW}
 
-        # 5️⃣ Update JSON in-place
-        jq --arg TITLE "$TITLE" --arg TYPE "$TYPE" \
-           --arg STATUS "$NEW_STATUS" \
-           --argjson CURRENT "$NEW_CURRENT" \
-           --argjson TOTAL "$NEW_TOTAL" \
-           --arg UNIT "$NEW_UNIT" \
-           --argjson SEASONS_CURRENT "${NEW_SEASONS_CURRENT:-0}" \
-           --argjson SEASONS_TOTAL "${NEW_SEASONS_TOTAL:-0}" \
-           --arg YEAR "$NEW_YEAR" \
-           --argjson GENRES "$GENRES_ARRAY" \
-           --argjson AUTHOR "$AUTHOR_ARRAY" \
-           --arg SERIES "$NEW_SERIES" \
-           --arg LOCAL_PATH "$NEW_LOCAL_PATH" \
-           --argjson AVAILABLE "$NEW_AVAILABLE" \
-           --arg OVERVIEW "$NEW_OVERVIEW" \
-           '(.media[] | select(.title==$TITLE and .type==$TYPE) | .status) |= $STATUS |
-            (.media[] | select(.title==$TITLE and .type==$TYPE) | .progress.current) |= $CURRENT |
-            (.media[] | select(.title==$TITLE and .type==$TYPE) | .progress.total) |= $TOTAL |
-            (.media[] | select(.title==$TITLE and .type==$TYPE) | .progress.unit) |= $UNIT |
-            if .type=="tv" or .type=="anime" or .type=="manga" then
-                (.seasons.current) |= $SEASONS_CURRENT |
-                (.seasons.total) |= $SEASONS_TOTAL
-            else . end |
-            (.media[] | select(.title==$TITLE and .type==$TYPE) | .metadata.year) |= $YEAR |
-            (.media[] | select(.title==$TITLE and .type==$TYPE) | .metadata.genres) |= $GENRES |
-            (.media[] | select(.title==$TITLE and .type==$TYPE) | .metadata.author) |= $AUTHOR |
-            (.media[] | select(.title==$TITLE and .type==$TYPE) | .metadata.series) |= $SERIES |
-            (.media[] | select(.title==$TITLE and .type==$TYPE) | .local.path) |= $LOCAL_PATH |
-            (.media[] | select(.title==$TITLE and .type==$TYPE) | .local.available) |= $AVAILABLE |
-            (.media[] | select(.title==$TITLE and .type==$TYPE) | .overview) |= $OVERVIEW
-           ' "$LIBRARY_JSON" > "${LIBRARY_JSON}.tmp" && mv "${LIBRARY_JSON}.tmp" "$LIBRARY_JSON"
+        # 5️⃣ Update full JSON sidecar
+        UPDATED_ITEM=$(echo "$ITEM" | jq --arg STATUS "$NEW_STATUS" \
+            --argjson CURRENT "$NEW_CURRENT" \
+            --argjson TOTAL "$NEW_TOTAL" \
+            --arg UNIT "$NEW_UNIT" \
+            --argjson SEASONS_CURRENT "${NEW_SEASONS_CURRENT:-0}" \
+            --argjson SEASONS_TOTAL "${NEW_SEASONS_TOTAL:-0}" \
+            --arg YEAR "$NEW_YEAR" \
+            --argjson GENRES "$GENRES_ARRAY" \
+            --argjson AUTHOR "$AUTHOR_ARRAY" \
+            --arg SERIES "$NEW_SERIES" \
+            --arg LOCAL_PATH "$NEW_LOCAL_PATH" \
+            --argjson AVAILABLE "$NEW_AVAILABLE" \
+            --arg OVERVIEW "$NEW_OVERVIEW" \
+            '.status = $STATUS |
+             .progress.current = $CURRENT |
+             .progress.total = $TOTAL |
+             .progress.unit = $UNIT |
+             if .type=="tv" or .type=="anime" or .type=="manga" then
+                .seasons.current = $SEASONS_CURRENT |
+                .seasons.total = $SEASONS_TOTAL
+             else . end |
+             .metadata.year = $YEAR |
+             .metadata.genres = $GENRES |
+             .metadata.author = $AUTHOR |
+             .metadata.series = $SERIES |
+             .local.path = $LOCAL_PATH |
+             .local.available = $AVAILABLE |
+             .overview = $OVERVIEW
+            ')
+        
+        echo "$UPDATED_ITEM" > "$MEDIA_FILE"
+
+        # 6️⃣ Update library index (Minimal version)
+        MINIMAL_ITEM=$(echo "$UPDATED_ITEM" | jq -c '
+          {
+            id: .id,
+            title: .title,
+            type: .type,
+            status: .status,
+            progress: .progress,
+            poster_path: .poster_path,
+            local: .local,
+            rating: (.rating // .vote_average // 0),
+            metadata: { 
+              year: (.metadata.year // null), 
+              release_date: (.metadata.release_date // null),
+              author: (.metadata.author // []) 
+            },
+            source: .source,
+            file: ("media/" + (.id | gsub("[:/]"; "_")) + ".json")
+          }
+        ')
+
+        jq --arg TITLE "$TITLE" --arg TYPE "$TYPE" --argjson NEW_ITEM "$MINIMAL_ITEM" \
+           '(.media[] | select(.title==$TITLE and .type==$TYPE)) |= $NEW_ITEM' \
+           "$LIBRARY_JSON" > "${LIBRARY_JSON}.tmp" && mv "${LIBRARY_JSON}.tmp" "$LIBRARY_JSON"
 
         echo "✅ Updated $TITLE"
         sleep 0.2

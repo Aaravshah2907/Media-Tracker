@@ -19,45 +19,48 @@ anilist_add() {
     esac
 
     # GraphQL query
-    read -r -d '' graphql_query <<EOF
-{
-  "query": "query (\$search: String) { Media(search: \$search, type: $anilist_type) { id title { romaji english native } format status episodes chapters volumes startDate { year month day } genres description } }",
-  "variables": { "search": "$query" }
-}
-EOF
+    graphql_query=$(jq -n --arg query "$query" --arg type "$anilist_type" '{
+      query: "query ($search: String, $type: MediaType) { Media(search: $search, type: $type) { id title { romaji english native } format status episodes chapters volumes startDate { year month day } genres description source studios(isMain: true) { nodes { name } } coverImage { large medium } averageScore } }",
+      variables: { search: $query, type: $type }
+    }')
 
     # Fetch and map JSON in a single step for robustness
-    curl -s -X POST -H "Content-Type: application/json" -d "$graphql_query" https://graphql.anilist.co | jq -c --arg type "$type" --arg subtype "$subtype" '
+    curl -s -X POST -H "Content-Type: application/json" -d "$graphql_query" https://graphql.anilist.co | jq -c --arg type "$type" --arg subtype "$subtype" --arg now "$(date -u +"%Y-%m-%dT%H:%M:%SZ")" '
         .data.Media | . as $media |
         {
           id: "anilist:\(.id)",
           title: (.title.english // .title.romaji // .title.native // "Unknown"),
           type: $type,
-          subtype: $subtype,
+          subtype: ($subtype // .format),
           status: (.status | ascii_downcase // "planned"),
           progress: {
             current: 0,
-            total: (if $type == "anime" then .episodes else .chapters end // 1),
-            unit: (if $type == "anime" then "episode" else "chapter" end)
+            total: (if $type == "anime" then .episodes else .chapters end // 0),
+            unit: (if $type == "anime" then "episode" else (if $type == "manga" then "chapter" else "page" end))
           },
           seasons: {
             current: 0,
-            total: (if $type == "anime" then null else .volumes end)
+            total: (if $type == "anime" then 1 else (.volumes // 0) end)
           },
           metadata: {
             year: .startDate.year,
             release_date: (if .startDate.year then
-              "\(.startDate.year)-\(if .startDate.month then (.startDate.month | tostring | lpad(2; "0")) else "01" end)-\(if .startDate.day then (.startDate.day | tostring | lpad(2; "0")) else "01" end)"
+              "\(.startDate.year)-\(if .startDate.month then (.startDate.month | tostring) else "01" end)-\(if .startDate.day then (.startDate.day | tostring) else "01" end)"
             else null end),
             genres: (.genres // [])
           },
-          source: {
-            provider: "anilist",
-            id: (.id | tostring)
-          },
+          source: { provider: "anilist", id: (.id | tostring) },
           local: {path: "", available: false},
-          timestamps: {added: (now | strftime("%Y-%m-%dT%H:%M:%SZ")), updated: (now | strftime("%Y-%m-%dT%H:%M:%SZ"))},
-          overview: (.description | gsub("<[^>]*>"; "") // "")
+          details: {
+            studios: [.studios.nodes[].name],
+            source: .source,
+            status: .status,
+            format: .format
+          },
+          timestamps: {added: $now, updated: $now},
+          overview: (.description | gsub("<[^>]*>"; "") // ""),
+          poster_path: (.coverImage.large // .coverImage.medium // ""),
+          rating: ((.averageScore // 0) / 10)
         }
     '
 }

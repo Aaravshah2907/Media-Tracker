@@ -33,9 +33,13 @@ fi
 fetch_anilist() {
     local id="$1"
     local type="$2"
+    local force="${3:-false}"
     local file="$CACHE_DIR/$type/anilist_${id}.json"
 
-    [[ -f "$file" ]] && { echo "Cache exists for $type $id, skipping."; return; }
+    if [[ -f "$file" ]] && [[ "$force" != "true" ]]; then
+        echo "Cache exists for $type $id, skipping."
+        return
+    fi
 
     query='
     query ($id: Int) {
@@ -70,9 +74,13 @@ fetch_anilist() {
 
 fetch_tv() {
     local id="$1"
+    local force="${2:-false}"
     local file="$CACHE_DIR/tv/tvmaze_${id}.json"
 
-    [[ -f "$file" ]] && { echo "Cache exists for tv $id, skipping."; return; }
+    if [[ -f "$file" ]] && [[ "$force" != "true" ]]; then
+        echo "Cache exists for tv $id, skipping."
+        return
+    fi
 
     curl -s "https://api.tvmaze.com/shows/${id}?embed=episodes" | jq . > "$file"
     echo "Saved tv $id to $file"
@@ -93,16 +101,19 @@ fetch_movie() {
 
 fetch_book() {
     local id="$1"
-    local path="${id#openlibrary:}"
     local safe_id="${id//[:\/]/_}"
-    local file="$CACHE_DIR/book/openlibrary_${safe_id}.json"
+    local file="$CACHE_DIR/book/${safe_id}.json"
 
     [[ -f "$file" ]] && { echo "Cache exists for book $id, skipping."; return; }
 
-    curl -s "https://openlibrary.org${path}.json" | jq . > "$file"
+    # Handle both full URL IDs and simple IDs
+    local clean_id="${id#googlebooks:}"
+    clean_id="${clean_id#gb:}"
+
+    curl -s "https://www.googleapis.com/books/v1/volumes/${clean_id}" | jq . > "$file"
 
     if [[ ! -s "$file" ]]; then
-        echo "Failed to fetch book $id from OpenLibrary."
+        echo "Failed to fetch book $id from Google Books."
         rm -f "$file"
         return 1
     fi
@@ -118,8 +129,9 @@ fetch_jikan() {
     # Episodes only apply to anime
     local ep_file="$CACHE_DIR/anime/mal_${mal_id}_episodes.json"
 
-    if [[ -f "$file" ]]; then
-        if [ "$type" = "manga" ] || [[ -f "$ep_file" ]]; then
+    if [[ -f "$file" ]] && [[ -f "$ep_file" ]]; then
+        # For refresh, we only re-fetch if file is old or force is true
+        if [[ "${3:-false}" != "true" ]]; then
             echo "Jikan cache exists for MAL $type ID $mal_id, skipping."
             return
         fi
@@ -152,6 +164,7 @@ jq -c '.media[]' "$LIBRARY" | while read -r item; do
     provider=$(echo "$item" | jq -r '.source.provider')
     id=$(echo "$item" | jq -r '.source.id')
     title=$(echo "$item" | jq -r '.title')
+    status=$(echo "$item" | jq -r '.status')
 
     # Determine cache file path
     case "$type" in
@@ -164,15 +177,32 @@ jq -c '.media[]' "$LIBRARY" | while read -r item; do
             ;;
         tv)          file="$CACHE_DIR/tv/tvmaze_${id}.json";;
         movie)       file="$CACHE_DIR/movie/tmdb_${id}.json";;
-        book)        file="$CACHE_DIR/book/openlibrary_${id//:/_}.json"
+        book)        
             safe_id="${id//[:\/]/_}"
-            file="$CACHE_DIR/book/openlibrary_${safe_id}.json"
+            file="$CACHE_DIR/book/${safe_id}.json"
             ;;
         *)           echo "Unknown type: $type"; continue;;
     esac
 
-    # If cache missing, add to pending
+    # If cache missing or item is ongoing (refresh every 24h), add to pending
+    needs_refresh=false
     if [[ ! -f "$file" ]]; then
+        needs_refresh=true
+    elif [[ "$status" == "watching" || "$status" == "caught up" ]]; then
+        # Check file age (24h refresh for ongoing shows)
+        if [[ "$OSTYPE" == "darwin"* ]]; then
+            mtime=$(stat -f %m "$file")
+        else
+            mtime=$(stat -c %Y "$file")
+        fi
+        age=$(( $(date +%s) - mtime ))
+        if [ "$age" -gt 86400 ]; then
+            echo "Refreshing $title (cache age: $((age/3600))h)..."
+            needs_refresh=true
+        fi
+    fi
+
+    if [ "$needs_refresh" = true ]; then
         jq --arg type "$type" --arg provider "$provider" --arg id "$id" --arg title "$title" \
             '. += [{"type":$type,"provider":$provider,"id":$id,"title":$title}]' \
             "$PENDING" > "$PENDING.tmp" && mv "$PENDING.tmp" "$PENDING"
@@ -186,23 +216,24 @@ jq -c '.[]' "$PENDING" | while read -r item; do
     type=$(echo "$item" | jq -r '.type')
     provider=$(echo "$item" | jq -r '.provider')
     id=$(echo "$item" | jq -r '.id')
-
+    
+    # We pass 'true' to trigger a force-refresh if file exists
     case "$type" in
         anime|manga)
             if [ "$provider" = "mal" ]; then
-                fetch_jikan "$id" "$type"
+                fetch_jikan "$id" "$type" "true"
             else
-                fetch_anilist "$id" "$type"
+                fetch_anilist "$id" "$type" "true"
                 if [ "$type" = "anime" ]; then
                     id_mal=$(jq -r '.data.Media.idMal // empty' "$CACHE_DIR/anime/anilist_${id//[:\/]/_}.json" 2>/dev/null)
                     if [ -n "$id_mal" ] && [ "$id_mal" != "null" ]; then
-                        fetch_jikan "$id_mal"
+                        fetch_jikan "$id_mal" "anime" "true"
                     fi
                 fi
             fi
             ;;
         tv)
-            fetch_tv "$id"
+            fetch_tv "$id" "true"
             ;;
         movie)
             fetch_movie "$id"

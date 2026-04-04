@@ -39,51 +39,36 @@ tvmaze_add() {
   total_episodes=$(echo "$episodes_json" | jq 'length')
   total_seasons=$(echo "$episodes_json" | jq '[.[].season] | max')
 
-  jq -n \
-    --arg id "tvmaze:$id" \
-    --arg title "$title" \
-    --arg year "$year" \
-    --argjson episodes "$total_episodes" \
-    --argjson seasons "$total_seasons" \
-    '{
+  # Build the uniform JSON
+  echo "$show" | jq --arg id "tvmaze:$id" --argjson total_episodes "$total_episodes" --argjson total_seasons "$total_seasons" --arg now "$(date -u +"%Y-%m-%dT%H:%M:%SZ")" '
+    {
       id: $id,
-      title: $title,
-
+      title: .name,
       type: "tv",
       subtype: null,
-
       status: "planned",
-
-      progress: {
-        current: 0,
-        total: $episodes,
-        unit: "episode"
-      },
-
-      seasons: {
-        current: 0,
-        total: $seasons
-      },
-
+      progress: { current: 0, total: $total_episodes, unit: "episode" },
+      seasons: { current: 0, total: $total_seasons },
       metadata: {
-        year: ($year | tonumber?),
+        year: (.premiered[0:4] | tonumber?),
         release_date: (.premiered // null),
-        genres: []
+        genres: .genres
       },
-
-      source: {
-        provider: "tvmaze",
-        id: ($id | split(":")[1])
+      source: { provider: "tvmaze", id: ($id | tostring) },
+      local: { path: "", available: false },
+      details: {
+        network: (.network?.name // .webChannel?.name // "Unknown"),
+        premiered: .premiered,
+        ended: .ended,
+        status: .status,
+        average_runtime: .averageRuntime,
+        official_site: .officialSite
       },
-
-      local: {
-        path: "",
-        available: false
-      },
-
-      timestamps: {
-        added: (now | todate),
-        updated: (now | todate)
-      }
-    }'
+      timestamps: { added: $now, updated: $now },
+      overview: (.summary | gsub("<[^>]*>"; "")),
+      poster_path: (.image?.medium // ""),
+      rating: (.rating?.average // 0)
+    }
+  '
 }
+
