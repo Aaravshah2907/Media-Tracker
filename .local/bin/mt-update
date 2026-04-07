@@ -49,7 +49,7 @@ while ! $EXIT; do
             break
         fi
 
-        # --- Load current values (from sidecar) ---
+        # --- Select Item Data ---
         ID=$(jq -r --arg TITLE "$TITLE" --arg TYPE "$TYPE" '.media[] | select(.title==$TITLE and .type==$TYPE) | .id' "$LIBRARY_JSON")
         SAFE_ID="${ID//[:\/]/_}"
         MEDIA_FILE="$MEDIA_DIR/${SAFE_ID}.json"
@@ -59,34 +59,46 @@ while ! $EXIT; do
         else
             ITEM=$(jq -r --arg TITLE "$TITLE" --arg TYPE "$TYPE" '.media[] | select(.title==$TITLE and .type==$TYPE)' "$LIBRARY_JSON")
         fi
+
         STATUS=$(echo "$ITEM" | jq -r '.status // ""')
         CURRENT=$(echo "$ITEM" | jq -r '.progress.current // 0')
         TOTAL=$(echo "$ITEM" | jq -r '.progress.total // 0')
+        UNIT=$(echo "$ITEM" | jq -r '.progress.unit // "episode"')
+
         if [[ "$TYPE" == "tv" || "$TYPE" == "anime" ]]; then
             SEASONS_CURRENT=$(echo "$ITEM" | jq -r '.seasons.current // 0')
             SEASONS_TOTAL=$(echo "$ITEM" | jq -r '.seasons.total // 0')
         fi
 
-        # --- Editable prompts ---
-        echo "Editing: $TITLE ($TYPE)"
+        # --- Edit prompts ---
+        echo "Updating: $TITLE ($TYPE)"
         read -p "Status [$STATUS]: " NEW_STATUS
         NEW_STATUS=${NEW_STATUS:-$STATUS}
-
-        read -p "Progress current [$CURRENT]: " NEW_CURRENT
+        read -p "Current $UNIT [$CURRENT]: " NEW_CURRENT
         NEW_CURRENT=${NEW_CURRENT:-$CURRENT}
-
-        read -p "Progress total [$TOTAL]: " NEW_TOTAL
+        read -p "Total $UNIT [$TOTAL]: " NEW_TOTAL
         NEW_TOTAL=${NEW_TOTAL:-$TOTAL}
 
         if [[ "$TYPE" == "tv" || "$TYPE" == "anime" ]]; then
-            read -p "Seasons current [$SEASONS_CURRENT]: " NEW_SEASONS_CURRENT
+            read -p "Season Current [$SEASONS_CURRENT]: " NEW_SEASONS_CURRENT
             NEW_SEASONS_CURRENT=${NEW_SEASONS_CURRENT:-$SEASONS_CURRENT}
-
-            read -p "Seasons total [$SEASONS_TOTAL]: " NEW_SEASONS_TOTAL
+            read -p "Season Total [$SEASONS_TOTAL]: " NEW_SEASONS_TOTAL
             NEW_SEASONS_TOTAL=${NEW_SEASONS_TOTAL:-$SEASONS_TOTAL}
         fi
 
-        # --- Update sidecar ---
+        # --- Sync userEpisodes if it is a multi-episode content ---
+        if [[ "$TYPE" == "tv" || "$TYPE" == "anime" ]]; then
+            # If current progress increased, mark all episodes up to New_Current as watched
+            # Use jq to update the sidecar's userEpisodes map
+            ITEM=$(echo "$ITEM" | jq --argjson new_curr "$NEW_CURRENT" --argjson old_curr "$CURRENT" \
+                'if $new_curr > $old_curr then
+                    reduce range(1; ($new_curr | tonumber) + 1) as $i (.;
+                        .userEpisodes["0_\($i)"] |= (if . == null then {number: $i, season: 0, watched: true} else .watched = true end)
+                    )
+                 else . end')
+        fi
+
+        # --- Update fields ---
         UPDATED_ITEM=$(echo "$ITEM" | jq --arg STATUS "$NEW_STATUS" \
             --argjson CURRENT "$NEW_CURRENT" \
             --argjson TOTAL "$NEW_TOTAL" \
@@ -99,12 +111,11 @@ while ! $EXIT; do
                 .seasons.current = $SEASONS_CURRENT |
                 .seasons.total = $SEASONS_TOTAL
              else . end |
-             .timestamps.updated = (now | todate)')
+             .timestamps.updated = (date +%FT%T%Z)')
         
         echo "$UPDATED_ITEM" > "$MEDIA_FILE"
 
-        # --- Update index ---
-        # We need to maintain the minimal fields we expect in library.json
+        # --- Update minimal library index ---
         MINIMAL_ITEM=$(echo "$UPDATED_ITEM" | jq -c '
           {
             id: .id,
@@ -118,16 +129,16 @@ while ! $EXIT; do
             brand: (.brand // ""),
             metadata: { 
               year: (.metadata.year // null), 
-              release_date: (.metadata.release_date // null),
-              author: (.metadata.author // []) 
+              release_date: (.metadata.release_date // null)
             },
             source: .source,
-            file: ("media/" + (.id | gsub("[:/]"; "_")) + ".json")
+            file: ("media/" + ($id | gsub("[:/]"; "_")) + ".json")
           }
-        ')
+        ' --arg id "$ID")
 
-        jq --arg TITLE "$TITLE" --arg TYPE "$TYPE" --argjson NEW_ITEM "$MINIMAL_ITEM" \
-           '(.media[] | select(.title==$TITLE and .type==$TYPE)) |= $NEW_ITEM' \
+        tmp=$(mktemp)
+        jq --arg id "$ID" --argjson NEW_ITEM "$MINIMAL_ITEM" \
+           '(.media[] | select(.id==$id)) |= $NEW_ITEM' \
            "$LIBRARY_JSON" > "$tmp" && mv "$tmp" "$LIBRARY_JSON"
 
         echo "✅ Updated $TITLE"

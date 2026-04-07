@@ -65,12 +65,23 @@ media_file="$MEDIA_DIR/${safe_id}.json"
 # --- Cleanup Cache Files ---
 case "$type" in
     anime|manga) 
-        file_to_remove="$CACHE_DIR/$type/anilist_${source_id}.json"
+        provider=$(echo "$item_json" | jq -r '.source.provider')
+        if [ "$provider" = "mal" ]; then
+            file_to_remove="$CACHE_DIR/$type/mal_${source_id}.json"
+        else
+            file_to_remove="$CACHE_DIR/$type/anilist_${source_id}.json"
+        fi
+        
         if [ "$type" = "anime" ]; then
-            # Also clean Jikan files
-            anilist_data=$(cat "$file_to_remove" 2>/dev/null || echo "{}")
-            mal_id=$(echo "$anilist_data" | jq -r '.data.Media.idMal // empty')
-            [ -n "$mal_id" ] && [ "$mal_id" != "null" ] && rm -f "$CACHE_DIR/anime/jikan_${mal_id}.json" "$CACHE_DIR/anime/jikan_${mal_id}_episodes.json"
+            # Also clean Jikan files if it was an Anilist item with MAL ID
+            if [ "$provider" = "anilist" ]; then
+                anilist_data=$(cat "$file_to_remove" 2>/dev/null || echo "{}")
+                mal_id=$(echo "$anilist_data" | jq -r '.data.Media.idMal // empty')
+                [ -n "$mal_id" ] && [ "$mal_id" != "null" ] && rm -f "$CACHE_DIR/anime/mal_${mal_id}.json" "$CACHE_DIR/anime/mal_${mal_id}_episodes.json"
+            else
+                # It was a MAL item, clean episode list
+                rm -f "$CACHE_DIR/anime/mal_${source_id}_episodes.json"
+            fi
         fi
         ;;
     tv)          file_to_remove="$CACHE_DIR/tv/tvmaze_${source_id}.json" ;;

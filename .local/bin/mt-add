@@ -110,8 +110,7 @@ minimal_entry=$(echo "$entry" | jq -c '
     brand: (.brand // ""),
     metadata: { 
       year: (.metadata.year // null), 
-      release_date: (.metadata.release_date // null),
-      author: (.metadata.author // []) 
+      release_date: (.metadata.release_date // null)
     },
     source: .source,
     file: ("media/" + ($id | gsub("[:/]"; "_")) + ".json")

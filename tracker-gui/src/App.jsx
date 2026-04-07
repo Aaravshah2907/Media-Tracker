@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import axios from 'axios';
-import { Search, Loader2, Edit3, X, Save, ExternalLink, RefreshCw, Send, ZapOff, CheckCircle, Folder, Play, Download, PlusCircle, Trash2, Plus, Filter, Link as LinkIcon, BookOpen } from 'lucide-react';
+import { Search, Loader2, Edit3, X, Save, ExternalLink, RefreshCw, Send, ZapOff, CheckCircle, Folder, Play, Download, PlusCircle, Trash2, Plus, Filter, Link as LinkIcon, BookOpen, Settings } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 
 const API_BASE = 'http://localhost:3001/api';
@@ -22,13 +22,48 @@ const App = () => {
   const [brandFilter, setBrandFilter] = useState('all');
   const [syncing, setSyncing] = useState(false);
   const [syncingProgress, setSyncingProgress] = useState(false);
+  const [showSettings, setShowSettings] = useState(false);
+  const [settings, setSettings] = useState({});
+  const [isSavingSettings, setIsSavingSettings] = useState(false);
+  const [browserContext, setBrowserContext] = useState(null); // 'media' or field key like 'MOVIES_PATH'
 
 
-  // INITIAL LOAD: Run mt-info silently
+  // INITIAL LOAD: Run mt-info silently if enabled
   useEffect(() => {
-    runSync();
-    fetchLibrary();
+    fetchSettings().then(() => {
+        fetchLibrary();
+    });
   }, []);
+
+  // When settings are loaded, check if we should run sync
+  useEffect(() => {
+    if (settings.AUTO_REFRESH !== 'false' && settings.AUTO_REFRESH !== undefined) {
+      runSync();
+    }
+  }, [settings.AUTO_REFRESH === undefined]); // This will trigger once it's loaded
+
+  const fetchSettings = async () => {
+    try {
+      const res = await axios.get(`${API_BASE}/settings`);
+      setSettings(res.data);
+    } catch (e) {
+      console.error('Failed to fetch settings');
+    }
+  };
+
+  const handleSaveSettings = async () => {
+    setIsSavingSettings(true);
+    try {
+      await axios.post(`${API_BASE}/settings`, settings);
+      setShowSettings(false);
+      // Re-fetch lib in case keys changed
+      fetchLibrary();
+    } catch (e) {
+      alert('Failed to save settings');
+    } finally {
+      setIsSavingSettings(false);
+    }
+  };
 
 
   const runSync = async () => {
@@ -450,9 +485,17 @@ const App = () => {
               <button
                 className="btn btn-primary"
                 style={{ padding: '8px 16px', fontSize: '12px' }}
-                onClick={() => {
-                  setSelectedItem({ ...selectedItem, local: { ...selectedItem.local, path: browserData.currentPath } });
+                onClick={async () => {
+                  const path = browserData.currentPath;
+                  if (browserContext && browserContext !== 'media') {
+                    setSettings({ ...settings, [browserContext]: path });
+                  } else {
+                    const updatedItem = { ...selectedItem, local: { ...selectedItem.local, path: path, available: true } };
+                    setSelectedItem(updatedItem);
+                    if (!editing) await handleSave(updatedItem);
+                  }
                   setShowFileBrowser(false);
+                  setBrowserContext(null);
                 }}
               >
                 Select Current Folder
@@ -471,12 +514,19 @@ const App = () => {
               <div
                 key={idx}
                 className="browser-item"
-                onClick={() => {
+                onClick={async () => {
+                  const newPath = item.path;
+                  const updatedItem = { ...selectedItem, local: { ...selectedItem.local, path: newPath, available: true } };
+                  
                   if (item.isDirectory) {
-                    fetchBrowserData(item.path);
+                    fetchBrowserData(newPath);
                   } else {
-                    setSelectedItem({ ...selectedItem, local: { ...selectedItem.local, path: item.path } });
+                    setSelectedItem(updatedItem);
                     setShowFileBrowser(false);
+                    // Automatic Save if not in explicit editing mode
+                    if (!editing) {
+                      await handleSave(updatedItem);
+                    }
                   }
                 }}
               >
@@ -486,10 +536,18 @@ const App = () => {
                   <button
                     className="btn btn-secondary"
                     style={{ padding: '4px 8px', fontSize: '11px', whiteSpace: 'nowrap' }}
-                    onClick={(e) => {
+                    onClick={async (e) => {
                       e.stopPropagation();
-                      setSelectedItem({ ...selectedItem, local: { ...selectedItem.local, path: item.path } });
+                      const path = item.path;
+                      if (browserContext && browserContext !== 'media') {
+                        setSettings({ ...settings, [browserContext]: path });
+                      } else {
+                        const updatedItem = { ...selectedItem, local: { ...selectedItem.local, path: path, available: true } };
+                        setSelectedItem(updatedItem);
+                        if (!editing) await handleSave(updatedItem);
+                      }
                       setShowFileBrowser(false);
+                      setBrowserContext(null);
                     }}
                   >
                     Select
@@ -610,6 +668,14 @@ const App = () => {
             >
               <ZapOff size={18} style={{ color: syncingProgress ? '#64ffda' : 'inherit' }} />
             </button>
+            <button
+              className="icon-btn"
+              onClick={() => setShowSettings(true)}
+              title="Settings"
+              style={{ marginLeft: '10px' }}
+            >
+              <Settings size={18} />
+            </button>
           </div>
         </div>
       </header>
@@ -664,18 +730,36 @@ const App = () => {
                             </div>
                           )}
                           <div className="play-overlay" style={{ gap: '15px' }}>
-                            {item.local?.available && (
-                              <button
-                                className="play-circle"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  axios.post(`${API_BASE}/open`, { filePath: item.local.path, type: item.type });
-                                }}
-                                title={(item.type === 'book' || item.type === 'manga') ? "Resume Reading" : "Play Media"}
-                              >
-                                {(item.type === 'book' || item.type === 'manga') ? <BookOpen size={24} /> : <Play fill="currentColor" size={24} style={{ marginLeft: '4px' }} />}
-                              </button>
-                            )}
+                              {item.local?.available ? (
+                                <button
+                                  className="play-circle"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    axios.post(`${API_BASE}/open`, { filePath: item.local.path, type: item.type });
+                                  }}
+                                  title={(item.type === 'book' || item.type === 'manga') ? "Resume Reading" : "Play Media"}
+                                >
+                                  {(item.type === 'book' || item.type === 'manga') ? <BookOpen size={24} /> : <Play fill="currentColor" size={24} style={{ marginLeft: '4px' }} />}
+                                </button>
+                              ) : (
+                                <button
+                                  className="play-circle outline"
+                                  style={{ borderStyle: 'dashed', opacity: 0.8 }}
+                                  onClick={async (e) => {
+                                    e.stopPropagation();
+                                    await handleSelectItem(item);
+                                    setBrowserContext('media');
+                                    const pathKey = item.type === 'movie' ? 'MOVIES_PATH' : (item.type === 'book' ? 'BOOKS_PATH' : `${item.type.toUpperCase()}_PATH`);
+                                    const defaultPath = settings[pathKey];
+                                    console.log(`Began Browse for ${item.type} using ${pathKey}: ${defaultPath}`);
+                                    fetchBrowserData(defaultPath); 
+                                    setShowFileBrowser(true);
+                                  }}
+                                  title="Link Local File/Folder"
+                                >
+                                  <Folder size={24} />
+                                </button>
+                              )}
                           </div>
                         </div>
                         <div className="card-content">
@@ -770,7 +854,7 @@ const App = () => {
                               {selectedItem.local?.available ? 'Available Offline' : 'Not Found Manually'}
                             </span>
                           </div>
-                          {selectedItem.local?.available && (
+                          {selectedItem.local?.available ? (
                             <button
                               onClick={(e) => {
                                 e.stopPropagation();
@@ -781,6 +865,21 @@ const App = () => {
                             >
                               {(selectedItem.type === 'book' || selectedItem.type === 'manga') ? <BookOpen size={16} /> : <Play size={16} fill="currentColor" />}
                               {(selectedItem.type === 'book' || selectedItem.type === 'manga') ? 'Resume Reading' : 'Play Media'}
+                            </button>
+                          ) : (
+                            <button
+                               onClick={(e) => {
+                                 e.stopPropagation();
+                                 setBrowserContext('media');
+                                 const pathKey = selectedItem.type === 'movie' ? 'MOVIES_PATH' : (selectedItem.type === 'book' ? 'BOOKS_PATH' : `${selectedItem.type.toUpperCase()}_PATH`);
+                                 const defaultPath = settings[pathKey];
+                                 fetchBrowserData(defaultPath);
+                                 setShowFileBrowser(true);
+                               }}
+                               className="btn btn-secondary"
+                               style={{ padding: '8px 16px', fontSize: '14px', display: 'flex', alignItems: 'center', gap: '8px', borderRadius: '100px', borderStyle: 'dashed' }}
+                            >
+                               <Folder size={16} /> Link Local File/Folder
                             </button>
                           )}
                         </div>
@@ -880,7 +979,10 @@ const App = () => {
                         className="btn btn-secondary"
                         style={{ padding: '0 15px', display: 'flex', alignItems: 'center', gap: '8px' }}
                         onClick={() => {
-                          fetchBrowserData(selectedItem.local?.path);
+                          setBrowserContext('media');
+                          const pathKey = selectedItem.type === 'movie' ? 'MOVIES_PATH' : (selectedItem.type === 'book' ? 'BOOKS_PATH' : `${selectedItem.type.toUpperCase()}_PATH`);
+                          const defaultPath = settings[pathKey];
+                          fetchBrowserData(selectedItem.local?.path || defaultPath);
                           setShowFileBrowser(true);
                         }}
                       >
@@ -1001,6 +1103,170 @@ const App = () => {
                   </div>
                 </div>
               )}
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {showSettings && (
+          <div className="modal-overlay" onClick={() => setShowSettings(false)}>
+            <motion.div
+              className="modal-content"
+              style={{ maxWidth: '600px' }}
+              initial={{ scale: 0.9, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.9, opacity: 0 }}
+              onClick={e => e.stopPropagation()}
+            >
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 25 }}>
+                <h2 className="section-title" style={{ marginBottom: 0 }}>System Settings</h2>
+                <button className="close-btn" onClick={() => setShowSettings(false)}><X size={24} /></button>
+              </div>
+
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+                <div className="settings-section">
+                  <h3 className="spec-label" style={{ marginBottom: '15px', fontSize: '14px' }}>API Configuration</h3>
+                  <div className="form-group">
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <label className="form-label">TMDb API Token</label>
+                      {settings.TMDB_TOKEN === '••••••••••••••••' && (
+                        <button 
+                          className="btn-secondary" 
+                          style={{ padding: '2px 8px', fontSize: '10px', height: '20px', borderRadius: '4px' }}
+                          onClick={() => setSettings({ ...settings, TMDB_TOKEN: '' })}
+                        >
+                          Reset Token
+                        </button>
+                      )}
+                    </div>
+                    <input
+                      type="password"
+                      className="form-input"
+                      placeholder="Enter TMDb Bearer Token..."
+                      style={{ opacity: settings.TMDB_TOKEN === '••••••••••••••••' ? 0.6 : 1, cursor: settings.TMDB_TOKEN === '••••••••••••••••' ? 'not-allowed' : 'text' }}
+                      value={settings.TMDB_TOKEN || ''}
+                      disabled={settings.TMDB_TOKEN === '••••••••••••••••'}
+                      onChange={(e) => setSettings({ ...settings, TMDB_TOKEN: e.target.value })}
+                    />
+                  </div>
+                  <div className="form-group">
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <label className="form-label">AniList Token (Optional)</label>
+                      {settings.ANILIST_TOKEN === '••••••••••••••••' && (
+                        <button 
+                          className="btn-secondary" 
+                          style={{ padding: '2px 8px', fontSize: '10px', height: '20px', borderRadius: '4px' }}
+                          onClick={() => setSettings({ ...settings, ANILIST_TOKEN: '' })}
+                        >
+                          Reset Token
+                        </button>
+                      )}
+                    </div>
+                    <input
+                      type="password"
+                      className="form-input"
+                      placeholder="Enter AniList Token..."
+                      style={{ opacity: settings.ANILIST_TOKEN === '••••••••••••••••' ? 0.6 : 1, cursor: settings.ANILIST_TOKEN === '••••••••••••••••' ? 'not-allowed' : 'text' }}
+                      value={settings.ANILIST_TOKEN || ''}
+                      disabled={settings.ANILIST_TOKEN === '••••••••••••••••'}
+                      onChange={(e) => setSettings({ ...settings, ANILIST_TOKEN: e.target.value })}
+                    />
+                  </div>
+                </div>
+
+                <div className="settings-section">
+                  <h3 className="spec-label" style={{ marginBottom: '15px', fontSize: '14px' }}>Default Media Locations</h3>
+                  {[
+                    { label: 'Movies Path', key: 'MOVIES_PATH' },
+                    { label: 'TV Shows Path', key: 'TV_PATH' },
+                    { label: 'Anime Path', key: 'ANIME_PATH' },
+                    { label: 'Manga Path', key: 'MANGA_PATH' },
+                    { label: 'Books Path', key: 'BOOKS_PATH' }
+                  ].map(field => (
+                    <div className="form-group" key={field.key}>
+                      <label className="form-label">{field.label}</label>
+                      <div style={{ display: 'flex', gap: '10px' }}>
+                        <input
+                          className="form-input"
+                          style={{ flex: 1 }}
+                          value={settings[field.key] || ''}
+                          onChange={(e) => setSettings({ ...settings, [field.key]: e.target.value })}
+                          placeholder="/Users/.../Videos"
+                        />
+                        <button
+                          className="btn btn-secondary"
+                          style={{ padding: '0 15px' }}
+                          onClick={() => {
+                            setBrowserContext(field.key);
+                            fetchBrowserData(settings[field.key]);
+                            setShowFileBrowser(true);
+                          }}
+                        >
+                          <Folder size={16} />
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+
+                <div className="settings-section">
+                  <h3 className="spec-label" style={{ marginBottom: '15px', fontSize: '14px' }}>System Preferences</h3>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '15px' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'rgba(255,255,255,0.03)', padding: '15px', borderRadius: '10px' }}>
+                      <div>
+                        <div style={{ fontWeight: '600', fontSize: '14px' }}>Automatic Meta Refresh</div>
+                        <div style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>Sync library data silently on page load</div>
+                      </div>
+                      <button 
+                        className={`island-btn ${settings.AUTO_REFRESH === 'true' ? 'active' : ''}`}
+                        style={{ width: '60px', height: '32px', borderRadius: '20px', border: '1px solid var(--glass-border)' }}
+                        onClick={() => setSettings({ ...settings, AUTO_REFRESH: settings.AUTO_REFRESH === 'true' ? 'false' : 'true' })}
+                      >
+                        {settings.AUTO_REFRESH === 'true' ? 'ON' : 'OFF'}
+                      </button>
+                    </div>
+
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '15px' }}>
+                      <div className="form-group">
+                        <label className="form-label" style={{ fontSize: '11px' }}>Web Search Limit</label>
+                        <input
+                          type="number"
+                          className="form-input"
+                          value={settings.SEARCH_LIMIT || '12'}
+                          onChange={(e) => setSettings({ ...settings, SEARCH_LIMIT: e.target.value })}
+                        />
+                      </div>
+                      <div className="form-group">
+                        <label className="form-label" style={{ fontSize: '11px' }}>TMDb Region (e.g. US, IN)</label>
+                        <input
+                          className="form-input"
+                          value={settings.TMDB_REGION || 'US'}
+                          onChange={(e) => setSettings({ ...settings, TMDB_REGION: e.target.value.toUpperCase() })}
+                        />
+                      </div>
+                    </div>
+
+                    <div className="form-group">
+                      <label className="form-label" style={{ fontSize: '11px' }}>Media Player Command</label>
+                      <input
+                        className="form-input"
+                        value={settings.PLAYER_CMD || 'open -a VLC'}
+                        placeholder="e.g. vlc, mpv, open -a IINA"
+                        onChange={(e) => setSettings({ ...settings, PLAYER_CMD: e.target.value })}
+                      />
+                    </div>
+                  </div>
+                </div>
+
+                <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '15px', marginTop: '20px' }}>
+                  <button className="btn btn-secondary" onClick={() => setShowSettings(false)}>Cancel</button>
+                  <button className="btn btn-primary" onClick={handleSaveSettings} disabled={isSavingSettings}>
+                    {isSavingSettings ? <Loader2 className="loader" size={16} style={{ width: 16, height: 16, borderWidth: 2 }} /> : <Save size={18} style={{ marginRight: 8, display: 'inline' }} />}
+                    Save Configuration
+                  </button>
+                </div>
+              </div>
             </motion.div>
           </div>
         )}

@@ -124,13 +124,14 @@ while true; do
                 .seasons.current = $SEASONS_CURRENT |
                 .seasons.total = $SEASONS_TOTAL
              else . end |
-             .metadata.year = $YEAR |
+             .metadata.year = ($YEAR | tonumber? // null) |
              .metadata.genres = $GENRES |
              .metadata.author = $AUTHOR |
              .metadata.series = $SERIES |
              .local.path = $LOCAL_PATH |
              .local.available = $AVAILABLE |
-             .overview = $OVERVIEW
+             .overview = $OVERVIEW |
+             .timestamps.updated = (now | todate)
             ')
         
         echo "$UPDATED_ITEM" > "$MEDIA_FILE"
@@ -149,16 +150,15 @@ while true; do
             brand: (.brand // ""),
             metadata: { 
               year: (.metadata.year // null), 
-              release_date: (.metadata.release_date // null),
-              author: (.metadata.author // []) 
+              release_date: (.metadata.release_date // null)
             },
             source: .source,
-            file: ("media/" + (.id | gsub("[:/]"; "_")) + ".json")
+            file: ("media/" + ($id | gsub("[:/]"; "_")) + ".json")
           }
-        ')
+        ' --arg id "$ID")
 
-        jq --arg TITLE "$TITLE" --arg TYPE "$TYPE" --argjson NEW_ITEM "$MINIMAL_ITEM" \
-           '(.media[] | select(.title==$TITLE and .type==$TYPE)) |= $NEW_ITEM' \
+        jq --arg id "$ID" --argjson NEW_ITEM "$MINIMAL_ITEM" \
+           '(.media[] | select(.id==$id)) |= $NEW_ITEM' \
            "$LIBRARY_JSON" > "${LIBRARY_JSON}.tmp" && mv "${LIBRARY_JSON}.tmp" "$LIBRARY_JSON"
 
         echo "✅ Updated $TITLE"

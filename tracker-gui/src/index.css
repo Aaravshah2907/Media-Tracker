@@ -786,6 +786,18 @@ body {
   font-family: monospace;
 }
 
+.settings-section {
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid var(--glass-border);
+  padding: 24px;
+  border-radius: 16px;
+  margin-bottom: 5px;
+}
+
+.settings-section .form-group:last-child {
+  margin-bottom: 0;
+}
+
 .fzf-container {
   background: rgba(100, 255, 218, 0.03);
   border: 1px solid var(--accent-glow);

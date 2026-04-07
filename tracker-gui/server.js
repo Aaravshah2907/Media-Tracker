@@ -15,14 +15,29 @@ const app = express();
 const PORT = 3001;
 const bus = new EventEmitter();
 
-// Load TMDB Token from .env manually
-let TMDB_TOKEN = '';
-const ENV_PATH = path.join(process.env.HOME, '.config/mt/.env');
-if (fs.existsSync(ENV_PATH)) {
-    const envContent = fs.readFileSync(ENV_PATH, 'utf8');
-    const match = envContent.match(/TMDB_TOKEN=["']?([^"'\n]+)["']?/);
-    if (match) TMDB_TOKEN = match[1];
-}
+// Config path
+const MT_CONFIG_DIR = path.join(process.env.HOME, '.config/mt');
+const ENV_PATH = path.join(MT_CONFIG_DIR, '.env');
+
+// Helper to load/parse .env
+const getEnvConfig = () => {
+    if (!fs.existsSync(ENV_PATH)) return {};
+    const content = fs.readFileSync(ENV_PATH, 'utf8');
+    const config = {};
+    content.split('\n').forEach(line => {
+        const match = line.match(/^\s*([\w.-]+)\s*=\s*(.*)?$/);
+        if (match) {
+            let value = match[2] || '';
+            // Remove surrounding quotes if any
+            value = value.replace(/^(['"])(.*)\1$/, '$2');
+            config[match[1]] = value;
+        }
+    });
+    return config;
+};
+
+// Initial load
+let TMDB_TOKEN = getEnvConfig().TMDB_TOKEN || '';
 
 // Paths - Prefer DATA_DIR environment variable
 const DATA_DIR = process.env.DATA_DIR || path.join(process.env.HOME, 'Documents/Personal/Tracker');
@@ -207,12 +222,16 @@ app.get('/api/search/:type/:query', async (req, res) => {
     const q = encodeURIComponent(query);
     
     try {
+        const config = getEnvConfig();
+        const limit = parseInt(config.SEARCH_LIMIT) || 12;
+        const region = config.TMDB_REGION || 'US';
+        
         let results = [];
         if (type === 'movie') {
-            const tmdbRes = await axios.get(`https://api.themoviedb.org/3/search/movie?query=${q}`, {
+            const tmdbRes = await axios.get(`https://api.themoviedb.org/3/search/movie?query=${q}&region=${region}`, {
                 headers: { Authorization: `Bearer ${TMDB_TOKEN}` }
             });
-            results = tmdbRes.data.results.map(r => ({
+            results = tmdbRes.data.results.slice(0, limit).map(r => ({
                 id: r.id,
                 title: r.title,
                 type: 'movie',
@@ -225,7 +244,7 @@ app.get('/api/search/:type/:query', async (req, res) => {
             }));
         } else if (type === 'tv') {
             const tvRes = await axios.get(`https://api.tvmaze.com/search/shows?q=${q}`);
-            results = tvRes.data.map(r => ({
+            results = tvRes.data.slice(0, limit).map(r => ({
                 id: r.show.id,
                 title: r.show.name,
                 type: 'tv',
@@ -238,7 +257,7 @@ app.get('/api/search/:type/:query', async (req, res) => {
             }));
         } else if (type === 'anime') {
             const aniRes = await axios.get(`https://api.jikan.moe/v4/anime?q=${q}`);
-            results = aniRes.data.data.map(r => ({
+            results = aniRes.data.data.slice(0, limit).map(r => ({
                 id: r.mal_id,
                 title: r.title_english || r.title,
                 type: 'anime',
@@ -251,7 +270,7 @@ app.get('/api/search/:type/:query', async (req, res) => {
             }));
         } else if (type === 'manga') {
             const aniRes = await axios.get(`https://api.jikan.moe/v4/manga?q=${q}`);
-            results = aniRes.data.data.map(r => ({
+            results = aniRes.data.data.slice(0, limit).map(r => ({
                 id: r.mal_id,
                 title: r.title_english || r.title,
                 type: 'manga',
@@ -263,7 +282,7 @@ app.get('/api/search/:type/:query', async (req, res) => {
                 source: { provider: 'mal', id: r.mal_id.toString() }
             }));
         } else if (type === 'book') {
-            const gbRes = await axios.get(`https://www.googleapis.com/books/v1/volumes?q=${q}&maxResults=35`);
+            const gbRes = await axios.get(`https://www.googleapis.com/books/v1/volumes?q=${q}&maxResults=${limit}`);
             results = (gbRes.data.items || []).map(item => {
                 const info = item.volumeInfo;
                 return {
@@ -561,6 +580,59 @@ app.get('/api/cache/:type/:id', async (req, res) => {
     }
 });
 
+// SETTINGS API
+app.get('/api/settings', (req, res) => {
+    try {
+        const config = getEnvConfig();
+        // Mask sensitive tokens for the frontend
+        const maskedConfig = { ...config };
+        const sensitiveKeys = ['TMDB_TOKEN', 'ANILIST_TOKEN'];
+        sensitiveKeys.forEach(key => {
+            if (maskedConfig[key]) maskedConfig[key] = '••••••••••••••••';
+        });
+        res.json(maskedConfig);
+    } catch (err) {
+        res.status(500).json({ error: 'Failed to read settings' });
+    }
+});
+
+app.post('/api/settings', async (req, res) => {
+    try {
+        const newSettings = req.body;
+        const currentConfig = getEnvConfig();
+        
+        // Merge settings, but handle masked tokens
+        const finalConfig = { ...currentConfig, ...newSettings };
+        
+        // Re-apply original tokens if they were sent as masked
+        const sensitiveKeys = ['TMDB_TOKEN', 'ANILIST_TOKEN'];
+        sensitiveKeys.forEach(key => {
+            if (newSettings[key] === '••••••••••••••••') {
+                finalConfig[key] = currentConfig[key];
+            }
+        });
+
+        // Ensure directory exists
+        fs.ensureDirSync(MT_CONFIG_DIR);
+
+        // Write back to .env
+        const envContent = Object.entries(finalConfig)
+            .map(([key, value]) => `${key}="${value}"`)
+            .join('\n');
+        
+        fs.writeFileSync(ENV_PATH, envContent + '\n');
+        
+        // Update live token
+        if (finalConfig.TMDB_TOKEN) {
+            TMDB_TOKEN = finalConfig.TMDB_TOKEN;
+        }
+
+        res.json({ success: true });
+    } catch (err) {
+        res.status(500).json({ error: 'Failed to save settings' });
+    }
+});
+
 // SSE for streaming terminal output
 app.get('/api/terminal/stream', (req, res) => {
     res.setHeader('Content-Type', 'text/event-stream');
@@ -658,6 +730,7 @@ app.post('/api/open-vlc-episode', async (req, res) => {
                 const files = fs.readdirSync(dirPath);
                 arrayOfFiles = arrayOfFiles || [];
                 files.forEach((file) => {
+                    if (file.startsWith('.')) return; // Skip hidden
                     const filePath = path.join(dirPath, file);
                     if (fs.statSync(filePath).isDirectory()) {
                         arrayOfFiles = getAllFiles(filePath, arrayOfFiles);
@@ -709,7 +782,9 @@ app.post('/api/open-vlc-episode', async (req, res) => {
             }
         }
         
-        const cmd = `open -a VLC ${escapeShell(targetPath)}`;
+        const config = getEnvConfig();
+        const playerCmd = config.PLAYER_CMD || 'open -a VLC';
+        const cmd = `${playerCmd} ${escapeShell(targetPath)}`;
         console.log(`Executing: ${cmd}`);
         spawn(cmd, { shell: '/bin/bash' });
         res.json({ success: true, path: targetPath });
@@ -833,7 +908,9 @@ app.get('/api/browse', async (req, res) => {
             currentPath = path.dirname(currentPath);
         }
 
-        const entries = fs.readdirSync(currentPath, { withFileTypes: true });
+        const entries = fs.readdirSync(currentPath, { withFileTypes: true })
+            .filter(entry => !entry.name.startsWith('.'));
+            
         const items = entries.map(entry => ({
             name: entry.name,
             path: path.join(currentPath, entry.name),
