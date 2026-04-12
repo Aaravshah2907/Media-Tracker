@@ -63,6 +63,31 @@ const naturalSort = (arr) => {
     return arr.sort(new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' }).compare);
 };
 
+// Keep only the 10 most recent playlists
+const cleanupPlaylists = () => {
+    try {
+        const files = fs.readdirSync(PLAYLISTS_DIR)
+            .filter(f => f.endsWith('.m3u8'))
+            .map(f => ({
+                name: f,
+                path: path.join(PLAYLISTS_DIR, f),
+                time: fs.statSync(path.join(PLAYLISTS_DIR, f)).mtime.getTime()
+            }))
+            .sort((a, b) => b.time - a.time); // Newest first
+
+        if (files.length > 10) {
+            const olderFiles = files.slice(10);
+            olderFiles.forEach(f => fs.removeSync(f.path));
+            console.log(`Cleaned up ${olderFiles.length} old playlist(s).`);
+        }
+    } catch (err) {
+        console.error('Playlist cleanup failed:', err);
+    }
+};
+
+// Initial cleanup on server start
+cleanupPlaylists();
+
 // Helper for audio/subtitle selection and playlist flags
 const getMediaFlags = (playerCmd) => {
     const isVLC = playerCmd.toLowerCase().includes('vlc');
@@ -843,6 +868,7 @@ app.post('/api/open-vlc-episode', async (req, res) => {
                 const playlistName = `playlist_${Date.now()}.m3u8`;
                 const playlistPath = path.join(PLAYLISTS_DIR, playlistName);
                 fs.writeFileSync(playlistPath, playlist.join('\n'), 'utf8');
+                cleanupPlaylists();
 
                 const config = getEnvConfig();
                 const playerCmd = config.PLAYER_CMD || 'open -a VLC';
