@@ -75,8 +75,8 @@ const cleanupPlaylists = () => {
             }))
             .sort((a, b) => b.time - a.time); // Newest first
 
-        if (files.length > 10) {
-            const olderFiles = files.slice(10);
+        if (files.length > 20) {
+            const olderFiles = files.slice(20);
             olderFiles.forEach(f => fs.removeSync(f.path));
             console.log(`Cleaned up ${olderFiles.length} old playlist(s).`);
         }
@@ -864,8 +864,8 @@ app.post('/api/open-vlc-episode', async (req, res) => {
                 const currentIndex = files.indexOf(match);
                 const playlist = files.slice(currentIndex); // Continuous playback: this + future
                 
-                // Create a temporary playlist file to avoid long argument lists
-                const playlistName = `playlist_${Date.now()}.m3u8`;
+                // Create a temporary playlist file named by media ID
+                const playlistName = `${mediaId.replace(/[:\/]/g, '-')}.m3u8`;
                 const playlistPath = path.join(PLAYLISTS_DIR, playlistName);
                 fs.writeFileSync(playlistPath, playlist.join('\n'), 'utf8');
                 cleanupPlaylists();

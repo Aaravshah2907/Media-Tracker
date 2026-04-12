@@ -94,5 +94,6 @@ case "$type" in
 esac
 
 [ -f "$file_to_remove" ] && rm -f "$file_to_remove"
+[ -f "$CACHE_DIR/playlists/${id//[:\/]/-}.m3u8" ] && rm -f "$CACHE_DIR/playlists/${id//[:\/]/-}.m3u8"
 
 echo "Removed $(echo "$item_json" | jq -r '.title') and its associated cache files."

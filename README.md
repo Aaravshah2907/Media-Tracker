@@ -27,6 +27,7 @@ A high-performance, aesthetic personal media tracker designed for Movies, TV Sho
 - **Advanced Library Filtering**: Dynamically browse your collection by **Production Company**, **Network**, or **Publisher** (e.g., HBO, MAPPA, Disney) using the new Studio filter.
 - **Absolute Episode Sync**: Precise progress tracking for TV/Anime series. Marking an episode as watched automatically advances the library's absolute progress (e.g., HIMYM 208/208).
 - **Precision Episode Tracking**: Individually link episodes to local file paths and mark checkmarks per-episode with sidecar persistence.
+- **Stable Playlists**: Automatically generates and manages persistent `.m3u8` playlists for series, using a predictable `source-id` naming scheme that auto-overwrites on each play to prevent folder clutter.
 
 ### 🔄 Intelligent Synchronization
 - **VLC (Live Sync)**: Real-time minute tracking for Movies. The toggle syncs your current playback timestamp directly to the tracker (e.g. `45m / 148m`).
