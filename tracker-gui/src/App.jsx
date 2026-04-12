@@ -26,6 +26,8 @@ const App = () => {
   const [settings, setSettings] = useState({});
   const [isSavingSettings, setIsSavingSettings] = useState(false);
   const [browserContext, setBrowserContext] = useState(null); // 'media' or field key like 'MOVIES_PATH'
+  const [browserType, setBrowserType] = useState(null); // 'movie', 'tv', etc.
+  const [pendingEpisode, setPendingEpisode] = useState(null); // { number, season }
 
 
   // INITIAL LOAD: Run mt-info silently if enabled
@@ -316,19 +318,11 @@ const App = () => {
   };
 
   const handleLinkEpisodePath = async (mediaId, number, season) => {
-    const filePath = window.prompt("Enter absolute path for this episode file:");
-    if (!filePath) return;
-    
-    try {
-      const res = await axios.post(`${API_BASE}/media/${mediaId}/batch-episodes`, {
-        episodes: [{ number, season, path: filePath }]
-      });
-      if (selectedItem && selectedItem.id === mediaId) {
-        setSelectedItem({ ...selectedItem, userEpisodes: res.data.userEpisodes });
-      }
-    } catch (e) {
-      alert("Failed to link episode path");
-    }
+    setPendingEpisode({ number, season });
+    setBrowserContext('episode');
+    const pathKey = selectedItem.type === 'movie' ? 'MOVIES_PATH' : (selectedItem.type === 'book' ? 'BOOKS_PATH' : `${selectedItem.type.toUpperCase()}_PATH`);
+    fetchBrowserData(settings[pathKey], selectedItem.type);
+    setShowFileBrowser(true);
   };
 
   const handleWebSearch = async (query) => {
@@ -458,10 +452,11 @@ const App = () => {
   const [showFileBrowser, setShowFileBrowser] = useState(false);
   const [browserData, setBrowserData] = useState({ items: [], currentPath: '' });
 
-  const fetchBrowserData = async (path = '') => {
+  const fetchBrowserData = async (path = '', type = null) => {
     try {
-      const res = await axios.get(`${API_BASE}/browse`, { params: { path } });
+      const res = await axios.get(`${API_BASE}/browse`, { params: { path, type: type || browserType } });
       setBrowserData(res.data);
+      if (type) setBrowserType(type);
     } catch (err) {
       console.error("Failed to fetch browser data", err);
     }
@@ -505,7 +500,7 @@ const App = () => {
           </div>
 
           <div className="browser-addr">
-            <button className="icon-btn" style={{ width: '30px', height: '30px', borderRadius: '8px' }} onClick={() => fetchBrowserData(browserData.parentPath)} title="Go Up"><X style={{ transform: 'rotate(90deg)' }} size={14} /></button>
+            <button className="icon-btn" style={{ width: '30px', height: '30px', borderRadius: '8px' }} onClick={() => fetchBrowserData(browserData.parentPath, browserType)} title="Go Up"><X style={{ transform: 'rotate(90deg)' }} size={14} /></button>
             <span>{browserData.currentPath}</span>
           </div>
 
@@ -519,14 +514,27 @@ const App = () => {
                   const updatedItem = { ...selectedItem, local: { ...selectedItem.local, path: newPath, available: true } };
                   
                   if (item.isDirectory) {
-                    fetchBrowserData(newPath);
+                    fetchBrowserData(newPath, browserType);
                   } else {
-                    setSelectedItem(updatedItem);
-                    setShowFileBrowser(false);
-                    // Automatic Save if not in explicit editing mode
-                    if (!editing) {
-                      await handleSave(updatedItem);
+                    if (browserContext === 'episode' && pendingEpisode) {
+                        try {
+                            const res = await axios.post(`${API_BASE}/media/${selectedItem.id}/batch-episodes`, {
+                                episodes: [{ ...pendingEpisode, path: newPath }]
+                            });
+                            setSelectedItem({ ...selectedItem, userEpisodes: res.data.userEpisodes });
+                        } catch (e) {
+                            alert("Failed to link episode path");
+                        }
+                        setPendingEpisode(null);
+                        setBrowserContext(null);
+                    } else {
+                        setSelectedItem(updatedItem);
+                        // Automatic Save if not in explicit editing mode
+                        if (!editing) {
+                            await handleSave(updatedItem);
+                        }
                     }
+                    setShowFileBrowser(false);
                   }
                 }}
               >
@@ -749,10 +757,10 @@ const App = () => {
                                     e.stopPropagation();
                                     await handleSelectItem(item);
                                     setBrowserContext('media');
-                                    const pathKey = item.type === 'movie' ? 'MOVIES_PATH' : (item.type === 'book' ? 'BOOKS_PATH' : `${item.type.toUpperCase()}_PATH`);
+                                     const pathKey = item.type === 'movie' ? 'MOVIES_PATH' : (item.type === 'book' ? 'BOOKS_PATH' : `${item.type.toUpperCase()}_PATH`);
                                     const defaultPath = settings[pathKey];
                                     console.log(`Began Browse for ${item.type} using ${pathKey}: ${defaultPath}`);
-                                    fetchBrowserData(defaultPath); 
+                                    fetchBrowserData(defaultPath, item.type); 
                                     setShowFileBrowser(true);
                                   }}
                                   title="Link Local File/Folder"
@@ -1199,7 +1207,8 @@ const App = () => {
                           style={{ padding: '0 15px' }}
                           onClick={() => {
                             setBrowserContext(field.key);
-                            fetchBrowserData(settings[field.key]);
+                            const typeMap = { MOVIES_PATH: 'movie', TV_PATH: 'tv', ANIME_PATH: 'anime', MANGA_PATH: 'manga', BOOKS_PATH: 'book' };
+                            fetchBrowserData(settings[field.key], typeMap[field.key]);
                             setShowFileBrowser(true);
                           }}
                         >

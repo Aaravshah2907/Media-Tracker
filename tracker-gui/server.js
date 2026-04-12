@@ -46,6 +46,9 @@ const CACHE_DIR = path.join(DATA_DIR, 'cache');
 const MEDIA_DIR = path.join(DATA_DIR, 'media');
 const PENDING_FILE = path.join(CACHE_DIR, 'pending.json');
 
+const VIDEO_EXTENSIONS = ['.mp4', '.mkv', '.avi', '.mov', '.wmv', '.flv', '.webm', '.m4v', '.mpg', '.mpeg'];
+const BOOK_EXTENSIONS = ['.pdf', '.epub', '.cbr', '.cbz', '.mobi', '.azw3'];
+
 // Ensure directories exist
 fs.ensureDirSync(MEDIA_DIR);
 fs.ensureDirSync(CACHE_DIR);
@@ -735,7 +738,11 @@ app.post('/api/open-vlc-episode', async (req, res) => {
                     if (fs.statSync(filePath).isDirectory()) {
                         arrayOfFiles = getAllFiles(filePath, arrayOfFiles);
                     } else {
-                        arrayOfFiles.push(filePath);
+                        // Only include video files for VLC episodes
+                        const ext = path.extname(file).toLowerCase();
+                        if (VIDEO_EXTENSIONS.includes(ext)) {
+                            arrayOfFiles.push(filePath);
+                        }
                     }
                 });
                 return arrayOfFiles;
@@ -888,7 +895,6 @@ app.post('/api/terminal/input', (req, res) => {
     activeProcess.stdin.write(input + '\n');
     res.json({ success: true });
 });
-
 app.get('/api/browse', async (req, res) => {
     try {
         let currentPath = req.query.path || process.env.HOME || '/';
@@ -908,8 +914,23 @@ app.get('/api/browse', async (req, res) => {
             currentPath = path.dirname(currentPath);
         }
 
+        const type = req.query.type;
+
         const entries = fs.readdirSync(currentPath, { withFileTypes: true })
-            .filter(entry => !entry.name.startsWith('.'));
+            .filter(entry => !entry.name.startsWith('.'))
+            .filter(entry => {
+                if (entry.isDirectory()) return true;
+                if (!type || type === 'all') return true;
+                
+                const ext = path.extname(entry.name).toLowerCase();
+                if (type === 'movie' || type === 'tv' || type === 'anime') {
+                    return VIDEO_EXTENSIONS.includes(ext);
+                }
+                if (type === 'book' || type === 'manga') {
+                    return BOOK_EXTENSIONS.includes(ext);
+                }
+                return true;
+            });
             
         const items = entries.map(entry => ({
             name: entry.name,

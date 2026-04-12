@@ -153,6 +153,7 @@ This project is constantly evolving. Here are the major features on our roadmap:
 5. **MyAnimeList/AniList Export**: A simple hook to sync your local list back to cloud services to prevent data loss.
 6. **Dynamic Theme Engine**: UI colors that shift based on the dominant palette of the media poster in view.
 7. **Global Command Palette (CMD+K)**: A high-performance search overlay to navigate and trigger commands from any screen.
+8. **Cast**: Add cast details.
 
 If you are interested in building these out, please open an Issue or check the Contributing section!
 
