@@ -56,6 +56,26 @@ fs.ensureDirSync(CACHE_DIR);
 // Helper to get filename for an ID
 const getMediaFilename = (id) => id.replace(/[:\/]/g, '_') + '.json';
 
+// Helper for natural sorting
+const naturalSort = (arr) => {
+    return arr.sort(new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' }).compare);
+};
+
+// Helper for audio selection flags
+const getAudioFlags = (playerCmd) => {
+    const isVLC = playerCmd.toLowerCase().includes('vlc');
+    const isMPV = playerCmd.toLowerCase().includes('mpv');
+    
+    // Default to prioritizing English and ignoring others if possible
+    if (isVLC) {
+        return ['--audio-language=en,eng,English'];
+    }
+    if (isMPV) {
+        return ['--alang=en,eng,English'];
+    }
+    return [];
+};
+
 // Prefer the workspace-local .local/bin if it exists
 const LOCAL_BIN = path.join(DATA_DIR, '.local/bin');
 const HOME_BIN = path.join(process.env.HOME, '.local/bin');
@@ -676,7 +696,13 @@ app.post('/api/open', (req, res) => {
         else appName = 'Books'; // Fallback for other book types
     }
 
-    const cmd = `open -a ${escapeShell(appName)} ${escapeShell(filePath)}`;
+    let cmd;
+    if (appName === 'VLC') {
+        const audioFlags = getAudioFlags('VLC');
+        cmd = `open -a VLC --args ${audioFlags.map(escapeShell).join(' ')} ${escapeShell(filePath)}`;
+    } else {
+        cmd = `open -a ${escapeShell(appName)} ${escapeShell(filePath)}`;
+    }
     console.log(`Executing: ${cmd}`);
     spawn(cmd, { shell: '/bin/bash' });
     res.json({ success: true, app: appName });
@@ -687,7 +713,8 @@ app.post('/api/open-vlc', (req, res) => {
     if (!filePath || !fs.existsSync(filePath)) {
         return res.status(404).json({ error: 'File not found' });
     }
-    const cmd = `open -a VLC ${escapeShell(filePath)}`;
+    const audioFlags = getAudioFlags('VLC');
+    const cmd = `open -a VLC --args ${audioFlags.map(escapeShell).join(' ')} ${escapeShell(filePath)}`;
     console.log(`Executing: ${cmd}`);
     spawn(cmd, { shell: '/bin/bash' });
     res.json({ success: true });
@@ -749,6 +776,7 @@ app.post('/api/open-vlc-episode', async (req, res) => {
             };
 
             const files = getAllFiles(targetPath);
+            naturalSort(files);
             
             const s = seasonNumber ? seasonNumber.toString().padStart(2, '0') : null;
             const e = episodeNumber.toString().padStart(2, '0');
@@ -783,7 +811,24 @@ app.post('/api/open-vlc-episode', async (req, res) => {
             }
             
             if (match) {
-                targetPath = match;
+                const currentIndex = files.indexOf(match);
+                const playlist = files.slice(currentIndex); // Continuous playback: this + future
+                
+                const config = getEnvConfig();
+                const playerCmd = config.PLAYER_CMD || 'open -a VLC';
+                const audioFlags = getAudioFlags(playerCmd);
+                
+                let cmd;
+                if (playerCmd.startsWith('open -a ')) {
+                    const appName = playerCmd.replace('open -a ', '').trim();
+                    cmd = `open -a ${escapeShell(appName)} --args ${audioFlags.map(escapeShell).join(' ')} ${playlist.map(escapeShell).join(' ')}`;
+                } else {
+                    cmd = `${playerCmd} ${audioFlags.map(escapeShell).join(' ')} ${playlist.map(escapeShell).join(' ')}`;
+                }
+                
+                console.log(`Executing: ${cmd}`);
+                spawn(cmd, { shell: '/bin/bash' });
+                return res.json({ success: true, path: match, playlistCount: playlist.length });
             } else {
                 return res.status(404).json({ error: `Could not find file for Episode ${episodeNumber}` });
             }
@@ -791,7 +836,16 @@ app.post('/api/open-vlc-episode', async (req, res) => {
         
         const config = getEnvConfig();
         const playerCmd = config.PLAYER_CMD || 'open -a VLC';
-        const cmd = `${playerCmd} ${escapeShell(targetPath)}`;
+        const audioFlags = getAudioFlags(playerCmd);
+        
+        let cmd;
+        if (playerCmd.startsWith('open -a ')) {
+            const appName = playerCmd.replace('open -a ', '').trim();
+            cmd = `open -a ${escapeShell(appName)} --args ${audioFlags.map(escapeShell).join(' ')} ${escapeShell(targetPath)}`;
+        } else {
+            cmd = `${playerCmd} ${audioFlags.map(escapeShell).join(' ')} ${escapeShell(targetPath)}`;
+        }
+        
         console.log(`Executing: ${cmd}`);
         spawn(cmd, { shell: '/bin/bash' });
         res.json({ success: true, path: targetPath });
