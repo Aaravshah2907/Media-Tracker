@@ -45,6 +45,7 @@ const LIBRARY_FILE = path.join(DATA_DIR, 'library.json');
 const CACHE_DIR = path.join(DATA_DIR, 'cache');
 const MEDIA_DIR = path.join(DATA_DIR, 'media');
 const PENDING_FILE = path.join(CACHE_DIR, 'pending.json');
+const PLAYLISTS_DIR = path.join(CACHE_DIR, 'playlists');
 
 const VIDEO_EXTENSIONS = ['.mp4', '.mkv', '.avi', '.mov', '.wmv', '.flv', '.webm', '.m4v', '.mpg', '.mpeg'];
 const BOOK_EXTENSIONS = ['.pdf', '.epub', '.cbr', '.cbz', '.mobi', '.azw3'];
@@ -52,6 +53,7 @@ const BOOK_EXTENSIONS = ['.pdf', '.epub', '.cbr', '.cbz', '.mobi', '.azw3'];
 // Ensure directories exist
 fs.ensureDirSync(MEDIA_DIR);
 fs.ensureDirSync(CACHE_DIR);
+fs.ensureDirSync(PLAYLISTS_DIR);
 
 // Helper to get filename for an ID
 const getMediaFilename = (id) => id.replace(/[:\/]/g, '_') + '.json';
@@ -61,17 +63,25 @@ const naturalSort = (arr) => {
     return arr.sort(new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' }).compare);
 };
 
-// Helper for audio selection flags
-const getAudioFlags = (playerCmd) => {
+// Helper for audio/subtitle selection and playlist flags
+const getMediaFlags = (playerCmd) => {
     const isVLC = playerCmd.toLowerCase().includes('vlc');
     const isMPV = playerCmd.toLowerCase().includes('mpv');
     
-    // Default to prioritizing English and ignoring others if possible
+    // Default to prioritizing English for both audio and subtitles
     if (isVLC) {
-        return ['--audio-language=en,eng,English'];
+        return [
+            '--audio-language=en,eng,English',
+            '--sub-language=en,eng,English'
+        ];
     }
     if (isMPV) {
-        return ['--alang=en,eng,English'];
+        return [
+            '--alang=en,eng,English',
+            '--slang=en,eng,English',
+            '--subs-with-matching-audio=no', // Show subs even if audio is English
+            '--sub-auto=all'                 // Load all available subtitle files in the folder
+        ];
     }
     return [];
 };
@@ -696,15 +706,25 @@ app.post('/api/open', (req, res) => {
         else appName = 'Books'; // Fallback for other book types
     }
 
-    let cmd;
-    if (appName === 'VLC') {
-        const audioFlags = getAudioFlags('VLC');
-        cmd = `open -a VLC --args ${audioFlags.map(escapeShell).join(' ')} ${escapeShell(filePath)}`;
+    const vlcBinary = '/Applications/VLC.app/Contents/MacOS/VLC';
+    const hasVlcBinary = fs.existsSync(vlcBinary);
+
+    let cmd, args;
+    if (appName === 'VLC' && hasVlcBinary) {
+        cmd = vlcBinary;
+        args = [...getMediaFlags('VLC'), filePath];
     } else {
-        cmd = `open -a ${escapeShell(appName)} ${escapeShell(filePath)}`;
+        cmd = 'open';
+        args = ['-a', appName];
+        if (appName === 'VLC') {
+            args.push('--args', ...getMediaFlags('VLC'), filePath);
+        } else {
+            args.push(filePath);
+        }
     }
-    console.log(`Executing: ${cmd}`);
-    spawn(cmd, { shell: '/bin/bash' });
+
+    console.log(`Executing: ${cmd} ${args.join(' ')}`);
+    spawn(cmd, args, { detached: true, stdio: 'ignore' }).unref();
     res.json({ success: true, app: appName });
 });
 
@@ -713,10 +733,26 @@ app.post('/api/open-vlc', (req, res) => {
     if (!filePath || !fs.existsSync(filePath)) {
         return res.status(404).json({ error: 'File not found' });
     }
-    const audioFlags = getAudioFlags('VLC');
-    const cmd = `open -a VLC --args ${audioFlags.map(escapeShell).join(' ')} ${escapeShell(filePath)}`;
-    console.log(`Executing: ${cmd}`);
-    spawn(cmd, { shell: '/bin/bash' });
+
+    const vlcBinary = '/Applications/VLC.app/Contents/MacOS/VLC';
+    const hasVlcBinary = fs.existsSync(vlcBinary);
+    
+    let cmd, args;
+    if (hasVlcBinary) {
+        cmd = vlcBinary;
+        args = [...getMediaFlags('VLC'), filePath];
+    } else {
+        cmd = 'open';
+        args = ['-a', 'VLC', '--args', ...getMediaFlags('VLC'), filePath];
+    }
+
+    console.log(`Executing: ${cmd} ${args.join(' ')}`);
+    spawn(cmd, args, { detached: true, stdio: 'ignore' }).unref();
+    res.json({ success: true });
+});
+
+app.post('/api/kill-vlc', (req, res) => {
+    spawn('pkill', ['-i', 'VLC']);
     res.json({ success: true });
 });
 
@@ -754,28 +790,17 @@ app.post('/api/open-vlc-episode', async (req, res) => {
         const stat = fs.lstatSync(targetPath);
         
         if (stat.isDirectory()) {
-            // Find episode file in directory
-            // We use standard fs because readdir recursive is newer
-            const getAllFiles = (dirPath, arrayOfFiles) => {
-                const files = fs.readdirSync(dirPath);
-                arrayOfFiles = arrayOfFiles || [];
-                files.forEach((file) => {
-                    if (file.startsWith('.')) return; // Skip hidden
-                    const filePath = path.join(dirPath, file);
-                    if (fs.statSync(filePath).isDirectory()) {
-                        arrayOfFiles = getAllFiles(filePath, arrayOfFiles);
-                    } else {
-                        // Only include video files for VLC episodes
-                        const ext = path.extname(file).toLowerCase();
-                        if (VIDEO_EXTENSIONS.includes(ext)) {
-                            arrayOfFiles.push(filePath);
-                        }
-                    }
+            // Find episode files - Only looking at immediate children
+            const files = fs.readdirSync(targetPath)
+                .filter(file => !file.startsWith('.'))
+                .map(file => path.join(targetPath, file))
+                .filter(filePath => {
+                    try {
+                        const stat = fs.statSync(filePath);
+                        return stat.isFile() && VIDEO_EXTENSIONS.includes(path.extname(filePath).toLowerCase());
+                    } catch (e) { return false; }
                 });
-                return arrayOfFiles;
-            };
 
-            const files = getAllFiles(targetPath);
             naturalSort(files);
             
             const s = seasonNumber ? seasonNumber.toString().padStart(2, '0') : null;
@@ -814,21 +839,34 @@ app.post('/api/open-vlc-episode', async (req, res) => {
                 const currentIndex = files.indexOf(match);
                 const playlist = files.slice(currentIndex); // Continuous playback: this + future
                 
+                // Create a temporary playlist file to avoid long argument lists
+                const playlistName = `playlist_${Date.now()}.m3u8`;
+                const playlistPath = path.join(PLAYLISTS_DIR, playlistName);
+                fs.writeFileSync(playlistPath, playlist.join('\n'), 'utf8');
+
                 const config = getEnvConfig();
                 const playerCmd = config.PLAYER_CMD || 'open -a VLC';
-                const audioFlags = getAudioFlags(playerCmd);
+                const mediaFlags = getMediaFlags(playerCmd);
+                const vlcBinary = '/Applications/VLC.app/Contents/MacOS/VLC';
+                const hasVlcBinary = fs.existsSync(vlcBinary);
                 
-                let cmd;
-                if (playerCmd.startsWith('open -a ')) {
+                let cmd, args;
+                if (playerCmd.includes('VLC') && hasVlcBinary) {
+                    cmd = vlcBinary;
+                    args = [...mediaFlags, playlistPath];
+                } else if (playerCmd.startsWith('open -a ')) {
                     const appName = playerCmd.replace('open -a ', '').trim();
-                    cmd = `open -a ${escapeShell(appName)} --args ${audioFlags.map(escapeShell).join(' ')} ${playlist.map(escapeShell).join(' ')}`;
+                    cmd = 'open';
+                    args = ['-a', appName, '--args', ...mediaFlags, playlistPath];
                 } else {
-                    cmd = `${playerCmd} ${audioFlags.map(escapeShell).join(' ')} ${playlist.map(escapeShell).join(' ')}`;
+                    const parts = playerCmd.split(' ');
+                    cmd = parts[0];
+                    args = [...parts.slice(1), ...mediaFlags, playlistPath];
                 }
                 
-                console.log(`Executing: ${cmd}`);
-                spawn(cmd, { shell: '/bin/bash' });
-                return res.json({ success: true, path: match, playlistCount: playlist.length });
+                console.log(`Executing: ${cmd} ${args.join(' ')}`);
+                spawn(cmd, args, { detached: true, stdio: 'ignore' }).unref();
+                return res.json({ success: true, path: match, playlistPath, playlistCount: playlist.length });
             } else {
                 return res.status(404).json({ error: `Could not find file for Episode ${episodeNumber}` });
             }
@@ -836,18 +874,26 @@ app.post('/api/open-vlc-episode', async (req, res) => {
         
         const config = getEnvConfig();
         const playerCmd = config.PLAYER_CMD || 'open -a VLC';
-        const audioFlags = getAudioFlags(playerCmd);
-        
-        let cmd;
-        if (playerCmd.startsWith('open -a ')) {
+        const mediaFlags = getMediaFlags(playerCmd);
+        const vlcBinary = '/Applications/VLC.app/Contents/MacOS/VLC';
+        const hasVlcBinary = fs.existsSync(vlcBinary);
+
+        let cmd, args;
+        if (playerCmd.includes('VLC') && hasVlcBinary) {
+            cmd = vlcBinary;
+            args = [...mediaFlags, targetPath];
+        } else if (playerCmd.startsWith('open -a ')) {
             const appName = playerCmd.replace('open -a ', '').trim();
-            cmd = `open -a ${escapeShell(appName)} --args ${audioFlags.map(escapeShell).join(' ')} ${escapeShell(targetPath)}`;
+            cmd = 'open';
+            args = ['-a', appName, '--args', ...mediaFlags, targetPath];
         } else {
-            cmd = `${playerCmd} ${audioFlags.map(escapeShell).join(' ')} ${escapeShell(targetPath)}`;
+            const parts = playerCmd.split(' ');
+            cmd = parts[0];
+            args = [...parts.slice(1), ...mediaFlags, targetPath];
         }
         
-        console.log(`Executing: ${cmd}`);
-        spawn(cmd, { shell: '/bin/bash' });
+        console.log(`Executing: ${cmd} ${args.join(' ')}`);
+        spawn(cmd, args, { detached: true, stdio: 'ignore' }).unref();
         res.json({ success: true, path: targetPath });
     } catch (err) {
         console.error('Failed to open episode:', err);
