@@ -340,19 +340,22 @@ app.get('/api/search/:type/:query', async (req, res) => {
                 source: { provider: 'mal', id: r.mal_id.toString() }
             }));
         } else if (type === 'book') {
-            const gbRes = await axios.get(`https://www.googleapis.com/books/v1/volumes?q=${q}&maxResults=${limit}`);
-            results = (gbRes.data.items || []).map(item => {
-                const info = item.volumeInfo;
+            const olRes = await axios.get(`https://openlibrary.org/search.json?title=${q}&limit=${limit}`, {
+                headers: { 'User-Agent': 'mt-add/1.0' }
+            });
+            results = (olRes.data.docs || []).map(doc => {
+                const author = doc.author_name?.[0] || '';
                 return {
-                    id: item.id,
-                    title: info.title,
+                    id: doc.key,
+                    title: doc.title,
+                    author: author,
                     type: 'book',
-                    year: info.publishedDate?.split('-')[0],
-                    poster_path: info.imageLinks?.thumbnail || info.imageLinks?.smallThumbnail || null,
-                    overview: info.description || '', // This is the blurb
-                    vote_average: (info.averageRating || 0) * 2,
-                    episodes: info.pageCount || 0,
-                    source: { provider: 'googlebooks', id: item.id }
+                    year: doc.first_publish_year?.toString() || '',
+                    poster_path: doc.cover_i ? `https://covers.openlibrary.org/b/id/${doc.cover_i}-M.jpg` : null,
+                    overview: '', // This will be hydrated later
+                    vote_average: 0,
+                    episodes: 0,
+                    source: { provider: 'openlibrary', id: doc.key }
                 };
             });
         }
@@ -384,11 +387,36 @@ app.post('/api/add-to-library', async (req, res) => {
                 const aniRes = await axios.get(`https://api.jikan.moe/v4/anime/${item.source.id}`);
                 totalEpisodes = aniRes.data.data?.episodes || 0;
             } catch (e) { /* fallback */ }
+        } else if (item.type === 'book' && item.source.provider === 'openlibrary') {
+            try {
+                const fullRes = await axios.get(`https://openlibrary.org${item.source.id}.json`, {
+                    headers: { 'User-Agent': 'mt-add/1.0' }
+                });
+                const doc = fullRes.data;
+                totalEpisodes = doc.number_of_pages || 0;
+                let desc = doc.description || '';
+                if (typeof desc === 'object') desc = desc.value || '';
+                item.overview = desc || item.overview;
+                if (doc.covers && doc.covers.length > 0) {
+                    item.poster_path = `https://covers.openlibrary.org/b/id/${doc.covers[0]}-L.jpg`;
+                }
+                item.brand = doc.publishers?.[0] || "Unknown";
+                item.genres = doc.subjects || [];
+                item.isbn = doc.isbn_13 || doc.isbn_10 || [];
+                item.published_date = doc.publish_date || null;
+            } catch (e) { console.error("OpenLibrary Hydration Failed:", e.message); }
         }
 
         const now = new Date().toISOString();
-        const newItem = {
-            id: `${item.source.provider}:${item.source.id}`,
+        
+        let newItemId = `${item.source.provider}:${item.source.id}`;
+        if (item.source.provider === 'openlibrary') {
+            newItemId = `ol:${item.source.id}`;
+            item.source.id = newItemId;
+        }
+
+        let newItem = {
+            id: newItemId,
             title: item.title,
             type: item.type,
             subtype: item.type === 'tv' ? 'series' : null,
@@ -417,6 +445,18 @@ app.post('/api/add-to-library', async (req, res) => {
             original_language: "en",
             popularity: 0
         };
+        
+        if (item.type === 'book' && item.source.provider === 'openlibrary') {
+            newItem.brand = item.brand;
+            newItem.details = {
+                authors: newItem.metadata.author,
+                publisher: item.brand || "Unknown",
+                published_date: item.published_date || null,
+                page_count: totalEpisodes,
+                isbn: item.isbn || [],
+                series: item.series || ""
+            };
+        }
         
         // Try to enrich brand from cache immediately
         try {
