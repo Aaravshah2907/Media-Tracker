@@ -14,6 +14,7 @@ const __dirname = path.dirname(__filename);
 const app = express();
 const PORT = 3001;
 const bus = new EventEmitter();
+bus.on('error', () => {}); // Prevent unhandled error crashes
 
 // Config path
 const MT_CONFIG_DIR = path.join(process.env.HOME, '.config/mt');
@@ -225,16 +226,26 @@ app.post('/api/media/:id/batch-episodes', async (req, res) => {
                     for (const sub of subfolders) {
                         const cachePath = path.join(CACHE_DIR, sub, cacheFilename);
                         if (fs.existsSync(cachePath)) {
-                            const cache = await fs.readJson(cachePath);
-                            if (sub === 'tv') allEps = cache._embedded?.episodes || [];
-                            else if (sub === 'anime') {
-                                const epFile = path.join(CACHE_DIR, 'anime', cacheFilename.replace('.json', '_episodes.json'));
-                                if (fs.existsSync(epFile)) {
-                                    const epData = await fs.readJson(epFile);
-                                    allEps = epData.data || [];
+                            try {
+                                const cache = await fs.readJson(cachePath);
+                                if (sub === 'tv') allEps = cache._embedded?.episodes || [];
+                                else if (sub === 'anime') {
+                                    const epFile = path.join(CACHE_DIR, 'anime', cacheFilename.replace('.json', '_episodes.json'));
+                                    if (fs.existsSync(epFile)) {
+                                        try {
+                                            const epData = await fs.readJson(epFile);
+                                            allEps = epData.data || [];
+                                        } catch (e) {
+                                            console.error(`Corrupt anime ep cache file deleted: ${epFile}`, e);
+                                            try { fs.unlinkSync(epFile); } catch (_) {}
+                                        }
+                                    }
                                 }
+                                break;
+                            } catch (e) {
+                                console.error(`Corrupt cache file deleted: ${cachePath}`, e);
+                                try { fs.unlinkSync(cachePath); } catch (_) {}
                             }
-                            break;
                         }
                     }
 
@@ -465,9 +476,14 @@ app.post('/api/add-to-library', async (req, res) => {
             for (const sub of subfolders) {
                 const cp = path.join(CACHE_DIR, sub, cacheFilename);
                 if (await fs.pathExists(cp)) {
-                    const cache = await fs.readJson(cp);
-                    newItem = enrichFromCache(newItem, cache);
-                    break;
+                    try {
+                        const cache = await fs.readJson(cp);
+                        newItem = enrichFromCache(newItem, cache);
+                        break;
+                    } catch (e) {
+                        console.error(`Corrupt cache file deleted during initial enrichment: ${cp}`, e);
+                        try { await fs.unlink(cp); } catch (_) {}
+                    }
                 }
             }
         } catch (e) {}
@@ -528,24 +544,29 @@ app.get('/api/library', async (req, res) => {
                 for (const sub of subfolders) {
                     const cp = path.join(CACHE_DIR, sub, cacheFilename);
                     if (fs.existsSync(cp)) {
-                        const cache = await fs.readJson(cp);
-                        // Mini enrichment inline to avoid full object replacement
-                        let b = null;
-                        if (item.type === 'movie') b = cache.production_companies?.[0]?.name;
-                        else if (item.type === 'tv') b = cache.network?.name || cache.webChannel?.name;
-                        else if (item.type === 'book') b = cache.volumeInfo?.publisher;
-                        else if (item.type === 'anime' || item.type === 'manga') {
-                             const data = cache.data?.Media || cache.data || cache;
-                             const studios = data.studios?.nodes?.map(s => s.name) || (data.producers?.map(p => p.name)) || [];
-                             b = studios[0];
-                        }
-                        
-                        if (b) {
-                            item.brand = b;
-                            changed = true;
-                        } else {
-                            item.brand = ""; // Done checking, don't repeat
-                            changed = true;
+                        try {
+                            const cache = await fs.readJson(cp);
+                            // Mini enrichment inline to avoid full object replacement
+                            let b = null;
+                            if (item.type === 'movie') b = cache.production_companies?.[0]?.name;
+                            else if (item.type === 'tv') b = cache.network?.name || cache.webChannel?.name;
+                            else if (item.type === 'book') b = cache.volumeInfo?.publisher;
+                            else if (item.type === 'anime' || item.type === 'manga') {
+                                 const data = cache.data?.Media || cache.data || cache;
+                                 const studios = data.studios?.nodes?.map(s => s.name) || (data.producers?.map(p => p.name)) || [];
+                                 b = studios[0];
+                            }
+                            
+                            if (b) {
+                                item.brand = b;
+                                changed = true;
+                            } else {
+                                item.brand = ""; // Done checking, don't repeat
+                                changed = true;
+                            }
+                        } catch (e) {
+                            console.error(`Corrupt cache file deleted during brand check: ${cp}`, e);
+                            try { fs.unlinkSync(cp); } catch (_) {}
                         }
                         break;
                     }
@@ -624,19 +645,21 @@ app.get('/api/media/:id', async (req, res) => {
 
         if (item) {
             // Re-hydrate details from cache if missing or just to be fresh
-            try {
-                const cacheFilename = id.replace(/[:\/]/g, '_') + '.json';
-                // Try to find cache in any type subfolder or common
-                const subfolders = ['movie', 'tv', 'anime', 'manga', 'book'];
-                for (const sub of subfolders) {
-                    const cachePath = path.join(CACHE_DIR, sub, cacheFilename);
-                    if (fs.existsSync(cachePath)) {
+            const cacheFilename = id.replace(/[:\/]/g, '_') + '.json';
+            const subfolders = ['movie', 'tv', 'anime', 'manga', 'book'];
+            for (const sub of subfolders) {
+                const cachePath = path.join(CACHE_DIR, sub, cacheFilename);
+                if (fs.existsSync(cachePath)) {
+                    try {
                         const cache = await fs.readJson(cachePath);
                         item = enrichFromCache(item, cache);
                         break;
+                    } catch (e) {
+                        console.error(`Corrupt cache file deleted during detail hydration: ${cachePath}`, e);
+                        try { fs.unlinkSync(cachePath); } catch (_) {}
                     }
                 }
-            } catch (e) { /* silent enrichment failure */ }
+            }
             
             res.json(item);
         } else {
@@ -655,16 +678,32 @@ app.get('/api/cache/:type/:id', async (req, res) => {
         const filePath = path.join(CACHE_DIR, type, filename);
         
         if (await fs.pathExists(filePath)) {
-            const data = await fs.readJson(filePath);
+            let data;
+            try {
+                data = await fs.readJson(filePath);
+            } catch (jsonErr) {
+                console.error(`Corrupt cache file deleted: ${filePath}`, jsonErr);
+                try {
+                    await fs.unlink(filePath);
+                } catch (unlinkErr) {}
+                return res.status(404).json({ error: 'Cache file was corrupted and deleted' });
+            }
             
             // Special handling for Jikan Anime to include episodes from the sidecar file
             if (type === 'anime') {
                 const epFilename = safe_id + '_episodes.json';
                 const epPath = path.join(CACHE_DIR, 'anime', epFilename);
                 if (await fs.pathExists(epPath)) {
-                    const epData = await fs.readJson(epPath);
-                    // Jikan episodes are usually in epData.data
-                    data.jikanEpisodes = epData.data || [];
+                    try {
+                        const epData = await fs.readJson(epPath);
+                        // Jikan episodes are usually in epData.data
+                        data.jikanEpisodes = epData.data || [];
+                    } catch (epJsonErr) {
+                        console.error(`Corrupt episode cache file deleted: ${epPath}`, epJsonErr);
+                        try {
+                            await fs.unlink(epPath);
+                        } catch (unlinkErr) {}
+                    }
                 }
             }
             

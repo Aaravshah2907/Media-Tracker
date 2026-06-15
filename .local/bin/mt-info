@@ -36,7 +36,7 @@ fetch_anilist() {
     local force="${3:-false}"
     local file="$CACHE_DIR/$type/anilist_${id}.json"
 
-    if [[ -f "$file" ]] && [[ "$force" != "true" ]]; then
+    if [[ -s "$file" ]] && jq -e . "$file" >/dev/null 2>&1 && [[ "$force" != "true" ]]; then
         echo "Cache exists for $type $id, skipping."
         return
     fi
@@ -65,11 +65,20 @@ fetch_anilist() {
 
     json=$(jq -n --argjson id "$id" --arg query "$query" '{query: $query, variables: {id: $id|tonumber}}')
 
+    local tmp_file="${file}.tmp"
     curl -s -X POST "https://graphql.anilist.co" \
         -H "Content-Type: application/json" \
-        -d "$json" | jq . > "$file"
+        -d "$json" | jq . > "$tmp_file"
 
-    echo "Saved $type $id to $file"
+    if [[ -s "$tmp_file" ]] && jq -e . "$tmp_file" >/dev/null 2>&1; then
+        mv "$tmp_file" "$file"
+        echo "Saved $type $id to $file"
+    else
+        echo "Failed to fetch/parse anilist $type $id."
+        rm -f "$tmp_file"
+        rm -f "$file"
+        return 1
+    fi
 }
 
 fetch_tv() {
@@ -77,26 +86,95 @@ fetch_tv() {
     local force="${2:-false}"
     local file="$CACHE_DIR/tv/tvmaze_${id}.json"
 
-    if [[ -f "$file" ]] && [[ "$force" != "true" ]]; then
+    if [[ -s "$file" ]] && jq -e . "$file" >/dev/null 2>&1 && [[ "$force" != "true" ]]; then
         echo "Cache exists for tv $id, skipping."
         return
     fi
 
-    curl -s "https://api.tvmaze.com/shows/${id}?embed=episodes" | jq . > "$file"
-    echo "Saved tv $id to $file"
+    local tmp_file="${file}.tmp"
+    curl -s "https://api.tvmaze.com/shows/${id}?embed=episodes" | jq . > "$tmp_file"
+
+    if [[ -s "$tmp_file" ]] && jq -e . "$tmp_file" >/dev/null 2>&1; then
+        mv "$tmp_file" "$file"
+        echo "Saved tv $id to $file"
+    else
+        echo "Failed to fetch/parse tv $id."
+        rm -f "$tmp_file"
+        rm -f "$file"
+        return 1
+    fi
 }
 
-fetch_movie() {
+# fetch_movie() {
     local id="$1"
+    local force="${2:-false}"
     local file="$CACHE_DIR/movie/tmdb_${id}.json"
 
-    [[ -f "$file" ]] && { echo "Cache exists for movie $id, skipping."; return; }
+    if [[ -s "$file" ]] && jq -e . "$file" > /dev/null 2>&1 && [[ "$force" != "true" ]]; then
+        echo "Cache exists for movie $id, skipping."
+        return
+    fi
 
-    curl -s "https://api.themoviedb.org/3/movie/${id}?language=en-US" \
-         -H "Authorization: Bearer $TMDB_TOKEN" \
-         -H "accept: application/json" | jq . > "$file"
+    local attempts=0
+    local max_attempts=3
+    while (( attempts < max_attempts )); do
+        attempts=$((attempts + 1))
+        local tmp_file="${file}.tmp"
+        # Use curl with -f to fail on HTTP errors
+        curl -s -f "https://api.themoviedb.org/3/movie/${id}?language=en-US" \
+             -H "Authorization: Bearer $TMDB_TOKEN" \
+             -H "accept: application/json" -o "$tmp_file"
+        curl_exit=$?
+        if [[ $curl_exit -ne 0 ]]; then
+            echo "Attempt $attempts: HTTP request failed for movie $id (curl exit $curl_exit). Retrying..."
+            rm -f "$tmp_file"
+            sleep 1
+            continue
+        fi
+        # Validate JSON content
+        if jq -e . "$tmp_file" > /dev/null 2>&1; then
+            mv "$tmp_file" "$file"
+            echo "Saved movie $id to $file"
+            return
+        else
+            echo "Attempt $attempts: Received invalid JSON for movie $id. Retrying..."
+            rm -f "$tmp_file"
+            sleep 1
+        fi
+    done
+    echo "All attempts failed: Could not fetch valid data for movie $id."
+    return 1
+}
+    local id="$1"
+    local force="${2:-false}"
+    local file="$CACHE_DIR/movie/tmdb_${id}.json"
 
-    echo "Saved movie $id to $file"
+    if [[ -s "$file" ]] && jq -e . "$file" > /dev/null 2>&1 && [[ "$force" != "true" ]]; then
+        echo "Cache exists for movie $id, skipping."
+        return
+    fi
+
+    local attempts=0
+    local max_attempts=3
+    while (( attempts < max_attempts )); do
+        attempts=$((attempts + 1))
+        local tmp_file="${file}.tmp"
+        curl -s "https://api.themoviedb.org/3/movie/${id}?language=en-US" \
+             -H "Authorization: Bearer $TMDB_TOKEN" \
+             -H "accept: application/json" | jq . > "$tmp_file"
+        if [[ -s "$tmp_file" ]] && jq -e . "$tmp_file" > /dev/null 2>&1; then
+            mv "$tmp_file" "$file"
+            echo "Saved movie $id to $file"
+            return
+        else
+            echo "Attempt $attempts: Failed to fetch/parse movie $id. Retrying..."
+            rm -f "$tmp_file"
+            rm -f "$file"
+        fi
+        sleep 1
+    done
+    echo "All attempts failed: Could not fetch movie $id."
+    return 1
 }
 
 fetch_book() {
@@ -104,21 +182,32 @@ fetch_book() {
     local safe_id="${id//[:\/]/_}"
     local file="$CACHE_DIR/book/${safe_id}.json"
 
-    [[ -f "$file" ]] && { echo "Cache exists for book $id, skipping."; return; }
+    if [[ -s "$file" ]] && jq -e . "$file" >/dev/null 2>&1; then
+        echo "Cache exists for book $id, skipping."
+        return
+    fi
 
-    # Handle both full URL IDs and simple IDs
-    local clean_id="${id#googlebooks:}"
-    clean_id="${clean_id#gb:}"
+    local tmp_file="${file}.tmp"
+    if [[ "$id" == ol:* ]]; then
+        local key="${id#ol:}"
+        curl -s -A "mt-info/1.0" "https://openlibrary.org${key}.json" | jq . > "$tmp_file"
+    else
+        # Handle both full URL IDs and simple IDs
+        local clean_id="${id#googlebooks:}"
+        clean_id="${clean_id#gb:}"
 
-    curl -s "https://www.googleapis.com/books/v1/volumes/${clean_id}" | jq . > "$file"
+        curl -s "https://www.googleapis.com/books/v1/volumes/${clean_id}" | jq . > "$tmp_file"
+    fi
 
-    if [[ ! -s "$file" ]]; then
-        echo "Failed to fetch book $id from Google Books."
+    if [[ -s "$tmp_file" ]] && jq -e . "$tmp_file" >/dev/null 2>&1; then
+        mv "$tmp_file" "$file"
+        echo "Saved book $id to $file"
+    else
+        echo "Failed to fetch/parse book $id."
+        rm -f "$tmp_file"
         rm -f "$file"
         return 1
     fi
-
-    echo "Saved book $id to $file"
 }
 
 fetch_jikan() {
@@ -129,39 +218,65 @@ fetch_jikan() {
     # Episodes only apply to anime
     local ep_file="$CACHE_DIR/anime/mal_${mal_id}_episodes.json"
 
-    if [[ -f "$file" ]] && [[ -f "$ep_file" ]]; then
-        # For refresh, we only re-fetch if file is old or force is true
-        if [[ "${3:-false}" != "true" ]]; then
-            echo "Jikan cache exists for MAL $type ID $mal_id, skipping."
-            return
+    local cache_exists=false
+    if [[ -s "$file" ]] && jq -e . "$file" >/dev/null 2>&1; then
+        if [ "$type" != "anime" ] || { [[ -s "$ep_file" ]] && jq -e . "$ep_file" >/dev/null 2>&1; }; then
+            cache_exists=true
         fi
     fi
 
+    if [ "$cache_exists" = true ] && [[ "${3:-false}" != "true" ]]; then
+        echo "Jikan cache exists for MAL $type ID $mal_id, skipping."
+        return
+    fi
+
     echo "Fetching Jikan (MAL) $type enrichment for ID $mal_id..."
-    curl -s -L -A "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36" \
-        "https://api.jikan.moe/v4/${type}/${mal_id}/full" | jq . > "$file"
+    local tmp_file="${file}.tmp"
+    curl -s -L -A "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/120.0.0.0" \
+        "https://api.jikan.moe/v4/${type}/${mal_id}/full" | jq . > "$tmp_file"
+    
+    if [[ ! -s "$tmp_file" ]] || ! jq -e . "$tmp_file" >/dev/null 2>&1; then
+        echo "Failed to fetch/parse MAL $type $mal_id."
+        rm -f "$tmp_file"
+        rm -f "$file"
+        return 1
+    fi
+
+    mv "$tmp_file" "$file"
     
     sleep 1 # Respect Jikan rate limits
     
     if [ "$type" = "anime" ]; then
         echo "Fetching Jikan episodes (Page 1)..."
+        local tmp_ep_file="${ep_file}.tmp"
         local initial_ep=$(curl -s -L -A "Mozilla/5.0" "https://api.jikan.moe/v4/anime/${mal_id}/episodes")
-        echo "$initial_ep" | jq . > "$ep_file"
+        echo "$initial_ep" | jq . > "$tmp_ep_file"
         
-        local has_next=$(echo "$initial_ep" | jq -r '.pagination.has_next_page // false')
-        local current_page=1
-        
-        while [ "$has_next" = "true" ] && [ $current_page -lt 15 ]; do
-            current_page=$((current_page + 1))
-            sleep 1 # Stricter rate limit for paginated calls
-            echo "Fetching Jikan episodes (Page $current_page)..."
-            local next_ep=$(curl -s -L -A "Mozilla/5.0" "https://api.jikan.moe/v4/anime/${mal_id}/episodes?page=$current_page")
+        if [[ -s "$tmp_ep_file" ]] && jq -e . "$tmp_ep_file" >/dev/null 2>&1; then
+            local has_next=$(echo "$initial_ep" | jq -r '.pagination.has_next_page // false')
+            local current_page=1
             
-            # Merge the "data" arrays
-            jq --argjson next "$next_ep" '.data += $next.data' "$ep_file" > "${ep_file}.tmp" && mv "${ep_file}.tmp" "$ep_file"
-            
-            has_next=$(echo "$next_ep" | jq -r '.pagination.has_next_page // false')
-        done
+            while [ "$has_next" = "true" ] && [ $current_page -lt 15 ]; do
+                current_page=$((current_page + 1))
+                sleep 1 # Stricter rate limit for paginated calls
+                echo "Fetching Jikan episodes (Page $current_page)..."
+                local next_ep=$(curl -s -L -A "Mozilla/5.0" "https://api.jikan.moe/v4/anime/${mal_id}/episodes?page=$current_page")
+                
+                # Merge the "data" arrays if next_ep is valid JSON
+                if echo "$next_ep" | jq -e . >/dev/null 2>&1; then
+                    jq --argjson next "$next_ep" '.data += $next.data' "$tmp_ep_file" > "${tmp_ep_file}.tmp2" && mv "${tmp_ep_file}.tmp2" "$tmp_ep_file"
+                else
+                    echo "Warning: failed to fetch page $current_page episodes for anime MAL $mal_id"
+                fi
+                
+                has_next=$(echo "$next_ep" | jq -r '.pagination.has_next_page // false')
+            done
+            mv "$tmp_ep_file" "$ep_file"
+        else
+            echo "Failed to fetch/parse episodes for MAL anime $mal_id."
+            rm -f "$tmp_ep_file"
+            rm -f "$ep_file"
+        fi
         sleep 1
     fi
 }
@@ -202,7 +317,7 @@ jq -c '.media[]' "$LIBRARY" | while read -r item; do
 
     # If cache missing or item is ongoing (refresh every 24h), add to pending
     needs_refresh=false
-    if [[ ! -f "$file" ]]; then
+    if [[ ! -s "$file" ]] || ! jq -e . "$file" >/dev/null 2>&1; then
         needs_refresh=true
     elif [[ "$status" == "watching" || "$status" == "caught up" ]]; then
         # Check file age (24h refresh for ongoing shows)
@@ -232,6 +347,11 @@ jq -c '.[]' "$PENDING" | while read -r item; do
     type=$(echo "$item" | jq -r '.type')
     provider=$(echo "$item" | jq -r '.provider')
     id=$(echo "$item" | jq -r '.id')
+    # Skip entries with missing or null IDs
+    if [ -z "$id" ] || [ "$id" = "null" ]; then
+        echo "Skipping entry with missing ID"
+        continue
+    fi
     
     # We pass 'true' to trigger a force-refresh if file exists
     case "$type" in
@@ -241,7 +361,7 @@ jq -c '.[]' "$PENDING" | while read -r item; do
             else
                 fetch_anilist "$id" "$type" "true"
                 if [ "$type" = "anime" ]; then
-                    id_mal=$(jq -r '.data.Media.idMal // empty' "$CACHE_DIR/anime/anilist_${id//[:\/]/_}.json" 2>/dev/null)
+                    id_mal=$(jq -r '.data.Media.idMal // empty' "$CACHE_DIR/anime/anilist_${id//[:\\/]/_}.json" 2>/dev/null)
                     if [ -n "$id_mal" ] && [ "$id_mal" != "null" ]; then
                         fetch_jikan "$id_mal" "anime" "true"
                     fi
@@ -252,7 +372,7 @@ jq -c '.[]' "$PENDING" | while read -r item; do
             fetch_tv "$id" "true"
             ;;
         movie)
-            fetch_movie "$id"
+            fetch_movie "$id" "false"
             ;;
         book)
             fetch_book "$id"
